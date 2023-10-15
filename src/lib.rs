@@ -108,7 +108,8 @@ trait ParseAny {
     fn any() -> Self::Parser;
 }
 
-trait ParseWhen<F> where F: Fn(&Self) -> bool {
+trait ParseWhen<T, F> where F: Fn(T) -> bool
+{
     type Parser: Extract;
 
     fn when(f: F) -> Self::Parser;
@@ -163,6 +164,39 @@ impl ParseAny for u8 {
 
     fn any() -> Self::Parser {
         AnyByteParser
+    }
+}
+
+struct ByteWhenParser<F>(F);
+
+impl<F> Extract for ByteWhenParser<F>
+where
+    F: Fn(&u8) -> bool,
+{
+    type State = ();
+
+    fn extract(
+        &self,
+        input: &mut Bytes,
+        _state: Option<Self::State>,
+    ) -> ParseResult<Self::State, Output> {
+        match input.first() {
+            Some(b) if (self.0)(b) => ParseResult::Match(Output {
+                chunks: OutputChunks::One(input.split_to(1)),
+            }),
+            Some(_) => ParseResult::NoMatch,
+            None => ParseResult::Partial(()),
+        }
+    }
+}
+
+impl<F> ParseWhen<&u8, F> for u8 where
+F: Fn(&u8) -> bool {
+    type Parser = ByteWhenParser<F>;
+
+    fn when(f: F) -> Self::Parser
+    {
+        ByteWhenParser(f)
     }
 }
 
@@ -253,7 +287,7 @@ mod tests {
 
     use bytes::Bytes;
 
-    use super::{Extract, ParseAny, ParseResult};
+    use super::{Extract, ParseAny, ParseResult, ParseWhen};
 
     #[test]
     fn test_byte_literal() {
@@ -282,6 +316,21 @@ mod tests {
         let res = u8::any().extract(&mut input, None);
         assert_matches!(res, ParseResult::Match(output) if output.to_string() == "4");
         let res = u8::any().extract(&mut input, None);
+        assert_matches!(res, ParseResult::Partial(_state));
+    }
+
+    #[test]
+    fn test_byte_when() {
+        let buffer = Bytes::from_static("A4".as_bytes());
+        let mut input = buffer.clone();
+        assert_eq!(input.len(), 2);
+        let res = u8::when(u8::is_ascii_alphabetic).extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "A");
+        let res = u8::when(u8::is_ascii_alphabetic).extract(&mut input.clone(), None);
+        assert_matches!(res, ParseResult::NoMatch);
+        let res = u8::when(u8::is_ascii_digit).extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "4");
+        let res = u8::when(u8::is_ascii_digit).extract(&mut input, None);
         assert_matches!(res, ParseResult::Partial(_state));
     }
 
