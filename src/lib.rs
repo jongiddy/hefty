@@ -24,15 +24,31 @@ struct Output {
 impl Output {
     fn push(&mut self, bytes: Bytes) {
         self.chunks = match std::mem::take(&mut self.chunks) {
-            OutputChunks::Empty => {
-                OutputChunks::One(bytes)
-            }
-            OutputChunks::One(first) => {
-                OutputChunks::Multiple(vec![first, bytes])
-            }
+            OutputChunks::Empty => OutputChunks::One(bytes),
+            OutputChunks::One(first) => OutputChunks::Multiple(vec![first, bytes]),
             OutputChunks::Multiple(mut v) => {
                 v.push(bytes);
                 OutputChunks::Multiple(v)
+            }
+        }
+    }
+
+    fn copy_to_slice(&self, slice: &mut [u8]) -> usize {
+        match &self.chunks {
+            OutputChunks::Empty => 0,
+            OutputChunks::One(bytes) => {
+                let len = bytes.len();
+                slice[..len].copy_from_slice(bytes);
+                len
+            }
+            OutputChunks::Multiple(chunks) => {
+                let mut copied = 0;
+                for bytes in chunks {
+                    let len = bytes.len();
+                    slice[copied..][..len].copy_from_slice(bytes);
+                    copied += len;
+                }
+                copied
             }
         }
     }
@@ -81,7 +97,6 @@ impl ToString for Output {
                 String::from_utf8_lossy(&vec).into_owned()
             }
         }
-
     }
 }
 
@@ -108,7 +123,9 @@ trait ParseAny {
     fn any() -> Self::Parser;
 }
 
-trait ParseWhen<T, F> where F: Fn(T) -> bool
+trait ParseWhen<T, F>
+where
+    F: Fn(T) -> bool,
 {
     type Parser: Extract;
 
@@ -190,12 +207,13 @@ where
     }
 }
 
-impl<F> ParseWhen<&u8, F> for u8 where
-F: Fn(&u8) -> bool {
+impl<F> ParseWhen<&u8, F> for u8
+where
+    F: Fn(&u8) -> bool,
+{
     type Parser = ByteWhenParser<F>;
 
-    fn when(f: F) -> Self::Parser
-    {
+    fn when(f: F) -> Self::Parser {
         ByteWhenParser(f)
     }
 }
@@ -280,6 +298,68 @@ impl ParseAny for char {
     }
 }
 
+struct CharWhenParser<F>(F);
+
+impl<F> Extract for CharWhenParser<F>
+where
+    F: Fn(&char) -> bool,
+{
+    type State = (usize, Output);
+
+    fn extract(
+        &self,
+        input: &mut Bytes,
+        state: Option<Self::State>,
+    ) -> ParseResult<Self::State, Output> {
+        let (mut required, mut output) = state.unwrap_or((0, Output::default()));
+        if required == 0 {
+            match input.first() {
+                Some(&b) => {
+                    required = utf8_char_width(b);
+                    if required == 0 {
+                        return ParseResult::NoMatch;
+                    }
+                }
+                None => {
+                    return ParseResult::Partial((required, output));
+                }
+            }
+        }
+        if input.len() < required {
+            required -= input.len();
+            output.push(input.split_off(0));
+            ParseResult::Partial((required, output))
+        } else {
+            output.push(input.split_to(required));
+            let mut bytes = [0; 4];
+            let len = output.copy_to_slice(&mut bytes);
+            match std::str::from_utf8(&bytes[..len]) {
+                Ok(s) => {
+                    let Some(c) = s.chars().next() else {
+                        return ParseResult::NoMatch;
+                    };
+                    if (self.0)(&c) {
+                        ParseResult::Match(output)
+                    } else {
+                        ParseResult::NoMatch
+                    }
+                }
+                Err(_) => ParseResult::NoMatch,
+            }
+        }
+    }
+}
+
+impl<F> ParseWhen<&char, F> for char
+where
+    F: Fn(&char) -> bool,
+{
+    type Parser = CharWhenParser<F>;
+
+    fn when(f: F) -> Self::Parser {
+        CharWhenParser(f)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -363,6 +443,17 @@ mod tests {
         let res = char::any().extract(&mut input, None);
         assert_matches!(res, ParseResult::Match(output) if output.to_string() == "4");
         let res = char::any().extract(&mut input, None);
+        assert_matches!(res, ParseResult::Partial(_state));
+
+        let mut input = buffer.clone();
+        let res = char::when(char::is_ascii_alphabetic).extract(&mut input.clone(), None);
+        assert_matches!(res, ParseResult::NoMatch);
+        let not_alphabetic = |c: &char| -> bool { !c.is_ascii_alphabetic() };
+        let res = char::when(not_alphabetic).extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "€");
+        let res = char::when(char::is_ascii_digit).extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "4");
+        let res = char::when(char::is_ascii_digit).extract(&mut input, None);
         assert_matches!(res, ParseResult::Partial(_state));
     }
 
