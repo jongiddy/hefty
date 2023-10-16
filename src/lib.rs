@@ -325,6 +325,42 @@ impl Extract for char {
     }
 }
 
+impl Extract for &str {
+    type State = (usize, Output);
+
+    fn extract(
+        &self,
+        input: &mut Bytes,
+        state: Option<Self::State>,
+    ) -> ParseResult<Self::State, Output> {
+        let mut bytes = self.as_bytes();
+        let (mut seen, mut output) = state.unwrap_or((
+            0,
+            Output {
+                chunks: OutputChunks::Empty,
+            },
+        ));
+        bytes.advance(seen);
+        if input.len() < bytes.len() {
+            if bytes.starts_with(input) {
+                seen += input.len();
+                output.push(input.split_off(0));
+                ParseResult::Partial((seen, output))
+            } else {
+                ParseResult::NoMatch
+            }
+        } else {
+            if input.starts_with(bytes) {
+                let bytes = input.split_to(bytes.len());
+                output.push(bytes);
+                ParseResult::Match(output)
+            } else {
+                ParseResult::NoMatch
+            }
+        }
+    }
+}
+
 struct AnyCharParser;
 
 impl Extract for AnyCharParser {
@@ -572,6 +608,18 @@ mod tests {
         assert_matches!(res, ParseResult::Match(output) if output.to_string() == "4");
         let res = u8::when(u8::is_ascii_digit).extract(&mut input, None);
         assert_matches!(res, ParseResult::Partial(_state));
+    }
+
+    #[test]
+    fn test_str_literal() {
+        let buffer = Bytes::from_static("hello, world!".as_bytes());
+        let mut input = buffer.clone();
+        let res = "hello".extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "hello");
+        let res = ", ".extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match(output) if output.to_string() == ", ");
+        let res = " everyone!".extract(&mut input, None);
+        assert_matches!(res, ParseResult::NoMatch);
     }
 
     #[test]
