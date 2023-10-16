@@ -1,5 +1,4 @@
 #![feature(assert_matches)]
-#![feature(slice_take)]
 #![feature(str_internals)]
 
 use core::str::utf8_char_width;
