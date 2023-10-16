@@ -1,4 +1,5 @@
 #![feature(assert_matches)]
+#![feature(associated_type_defaults)]
 #![feature(str_internals)]
 
 use core::str::utf8_char_width;
@@ -22,6 +23,9 @@ struct Output {
 
 impl Output {
     fn push(&mut self, bytes: Bytes) {
+        if bytes.is_empty() {
+            return;
+        }
         self.chunks = match std::mem::take(&mut self.chunks) {
             OutputChunks::Empty => OutputChunks::One(bytes),
             OutputChunks::One(first) => OutputChunks::Multiple(vec![first, bytes]),
@@ -30,6 +34,10 @@ impl Output {
                 OutputChunks::Multiple(v)
             }
         }
+    }
+
+    fn is_empty(&self) -> bool {
+        matches!(self.chunks, OutputChunks::Empty)
     }
 
     fn copy_to_slice(&self, slice: &mut [u8]) -> usize {
@@ -99,11 +107,74 @@ impl ToString for Output {
     }
 }
 
-#[derive(Debug)]
 enum ParseResult<State, Output> {
     NoMatch,
     Partial(State),
     Match(Output),
+}
+
+impl<State, Output> std::fmt::Debug for ParseResult<State, Output> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoMatch => write!(f, "NoMatch"),
+            Self::Partial(_arg0) => write!(f, "Partial"),
+            Self::Match(_arg0) => write!(f, "Match"),
+        }
+    }
+}
+
+struct OptionalParser<InnerParser> {
+    inner: InnerParser,
+}
+
+impl<InnerParser> OptionalParser<InnerParser> {
+    fn new(inner: InnerParser) -> Self {
+        Self { inner }
+    }
+}
+
+impl<InnerParser> Extract for OptionalParser<InnerParser>
+where
+    InnerParser: Extract,
+{
+    type State = (InnerParser::State, Box<dyn Buf>);
+
+    fn extract(
+        &self,
+        input: &mut Bytes,
+        state: Option<Self::State>,
+    ) -> ParseResult<Self::State, Output> {
+        let saved = input.clone();
+        match state {
+            Some((inner_state, buf)) => match self.inner.extract(input, Some(inner_state)) {
+                ParseResult::NoMatch => {
+                    let mut chain = buf.chain(saved);
+                    let length = chain.remaining();
+                    *input = chain.copy_to_bytes(length);
+                    ParseResult::Match(Output {
+                        chunks: OutputChunks::Empty,
+                    })
+                }
+                ParseResult::Partial(inner_state) => {
+                    let chain = Box::new(buf.chain(saved));
+                    ParseResult::Partial((inner_state, chain))
+                }
+                ParseResult::Match(output) => ParseResult::Match(output),
+            },
+            None => match self.inner.extract(input, None) {
+                ParseResult::NoMatch => {
+                    *input = saved;
+                    ParseResult::Match(Output {
+                        chunks: OutputChunks::Empty,
+                    })
+                }
+                ParseResult::Partial(inner_state) => {
+                    ParseResult::Partial((inner_state, Box::new(saved)))
+                }
+                ParseResult::Match(output) => ParseResult::Match(output),
+            },
+        }
+    }
 }
 
 trait Extract {
@@ -114,6 +185,12 @@ trait Extract {
         input: &mut Bytes,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, Output>;
+}
+
+trait Repeatable: Extract + Sized {
+    fn optional(self) -> OptionalParser<Self> {
+        OptionalParser::new(self)
+    }
 }
 
 trait ParseAny {
@@ -154,6 +231,8 @@ impl Extract for u8 {
     }
 }
 
+impl Repeatable for u8 {}
+
 impl<const N: usize> Extract for [u8; N] {
     type State = (usize, Output);
 
@@ -190,6 +269,8 @@ impl<const N: usize> Extract for [u8; N] {
     }
 }
 
+impl<const N: usize> Repeatable for [u8; N] {}
+
 struct AnyByteParser;
 
 impl Extract for AnyByteParser {
@@ -210,6 +291,8 @@ impl Extract for AnyByteParser {
         }
     }
 }
+
+impl Repeatable for AnyByteParser {}
 
 impl ParseAny for u8 {
     type Parser = AnyByteParser;
@@ -241,6 +324,8 @@ where
         }
     }
 }
+
+impl<F> Repeatable for ByteWhenParser<F> where F: Fn(u8) -> bool {}
 
 impl<F> ParseWhen<u8, F> for u8
 where
@@ -275,6 +360,8 @@ where
         }
     }
 }
+
+impl<F> Repeatable for ByteWhenRefParser<F> where F: Fn(&u8) -> bool {}
 
 impl<F> ParseWhen<&u8, F> for u8
 where
@@ -324,6 +411,8 @@ impl Extract for char {
     }
 }
 
+impl Repeatable for char {}
+
 impl Extract for &str {
     type State = (usize, Output);
 
@@ -360,6 +449,8 @@ impl Extract for &str {
     }
 }
 
+impl Repeatable for &str {}
+
 struct AnyCharParser;
 
 impl Extract for AnyCharParser {
@@ -394,6 +485,8 @@ impl Extract for AnyCharParser {
         }
     }
 }
+
+impl Repeatable for AnyCharParser {}
 
 impl ParseAny for char {
     type Parser = AnyCharParser;
@@ -454,6 +547,8 @@ where
         }
     }
 }
+
+impl<F> Repeatable for CharWhenParser<F> where F: Fn(char) -> bool {}
 
 impl<F> ParseWhen<char, F> for char
 where
@@ -518,6 +613,8 @@ where
     }
 }
 
+impl<F> Repeatable for CharWhenRefParser<F> where F: Fn(&char) -> bool {}
+
 impl<F> ParseWhen<&char, F> for char
 where
     F: Fn(&char) -> bool,
@@ -534,6 +631,8 @@ mod tests {
     use std::assert_matches::assert_matches;
 
     use bytes::Bytes;
+
+    use crate::Repeatable;
 
     use super::{Extract, ParseAny, ParseResult, ParseWhen};
 
@@ -717,5 +816,18 @@ mod tests {
         let mut input = buffer.slice(2..);
         let res = '₭'.extract(&mut input, Some(state));
         assert_matches!(res, ParseResult::NoMatch);
+    }
+
+    #[test]
+    fn test_optional() {
+        let mut input = Bytes::from_static("helloworld".as_bytes());
+        let res = "hello".optional().extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "hello");
+        let res = ", ".optional().extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match(output) if output.is_empty());
+        let res = "world".optional().extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "world");
+        let res = "world".optional().extract(&mut input, None);
+        assert_matches!(res, ParseResult::Partial(_state));
     }
 }
