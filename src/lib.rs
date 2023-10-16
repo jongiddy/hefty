@@ -155,6 +155,42 @@ impl Extract for u8 {
     }
 }
 
+impl<const N: usize> Extract for [u8; N] {
+    type State = (usize, Output);
+
+    fn extract(
+        &self,
+        input: &mut Bytes,
+        state: Option<Self::State>,
+    ) -> ParseResult<Self::State, Output> {
+        let mut bytes = self.as_slice();
+        let (mut seen, mut output) = state.unwrap_or((
+            0,
+            Output {
+                chunks: OutputChunks::Empty,
+            },
+        ));
+        bytes.advance(seen);
+        if input.len() < bytes.len() {
+            if bytes.starts_with(input) {
+                seen += input.len();
+                output.push(input.split_off(0));
+                ParseResult::Partial((seen, output))
+            } else {
+                ParseResult::NoMatch
+            }
+        } else {
+            if input.starts_with(bytes) {
+                let bytes = input.split_to(bytes.len());
+                output.push(bytes);
+                ParseResult::Match(output)
+            } else {
+                ParseResult::NoMatch
+            }
+        }
+    }
+}
+
 struct AnyByteParser;
 
 impl Extract for AnyByteParser {
@@ -480,6 +516,18 @@ mod tests {
 
         let mut input = buffer.clone();
         let res = b'3'.extract(&mut input, None);
+        assert_matches!(res, ParseResult::NoMatch);
+    }
+
+    #[test]
+    fn test_byte_array_literal() {
+        let buffer = Bytes::from_static(b"hello, world!");
+        let mut input = buffer.clone();
+        let res = b"hello".extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "hello");
+        let res = b", ".extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match(output) if output.to_string() == ", ");
+        let res = b" everyone!".extract(&mut input, None);
         assert_matches!(res, ParseResult::NoMatch);
     }
 
