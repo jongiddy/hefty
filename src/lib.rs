@@ -746,9 +746,25 @@ where
     }
 }
 
+impl<F> Extract for F
+where
+    F: Fn(&mut ByteStream) -> ParseResult<ByteStream, ByteStream>,
+{
+    type State = ByteStream;
+
+    fn extract(
+        &self,
+        input: &mut ByteStream,
+        state: Option<Self::State>,
+    ) -> ParseResult<Self::State, ByteStream> {
+        (self)(input)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::assert_matches::assert_matches;
+    use std::collections::VecDeque;
 
     use bytes::Buf;
 
@@ -947,5 +963,33 @@ mod tests {
         assert_matches!(res, ParseResult::Match(output) if output.to_string() == "world");
         let res = "world".optional().extract(&mut input, None);
         assert_matches!(res, ParseResult::Partial(_state));
+    }
+
+    fn reverse(input: &mut ByteStream) -> ParseResult<ByteStream, ByteStream> {
+        let mut d = VecDeque::new();
+        for b in input.iter().cloned() {
+            d.push_front(b);
+        }
+        let v = d.into_iter().collect::<Vec<_>>();
+        let output = ByteStream::from(bytes::Bytes::from(v));
+        ParseResult::Match(output)
+    }
+
+    fn make_reverse(i: usize) -> impl Fn(&mut ByteStream) -> ParseResult<ByteStream, ByteStream> {
+        move |bs| {
+            let mut bs1 = bs.take_before(i);
+            reverse(&mut bs1)
+        }
+    }
+
+    #[test]
+    fn test_function() {
+        let mut input = ByteStream::from("helloworld");
+        let res = reverse.extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "dlrowolleh");
+
+        let mut input = ByteStream::from("helloworld");
+        let res = make_reverse(6).extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "wolleh");
     }
 }
