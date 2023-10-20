@@ -470,9 +470,19 @@ where
     }
 }
 
+trait ExtractFunction:
+    Fn(&mut ByteStream, Option<ByteStream>) -> ParseResult<ByteStream, ByteStream>
+{
+}
+
+impl<T> ExtractFunction for T where
+    T: Fn(&mut ByteStream, Option<ByteStream>) -> ParseResult<ByteStream, ByteStream>
+{
+}
+
 impl<F> Extract for F
 where
-    F: Fn(&mut ByteStream) -> ParseResult<ByteStream, ByteStream>,
+    F: ExtractFunction,
 {
     type State = ByteStream;
 
@@ -481,7 +491,7 @@ where
         input: &mut ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, ByteStream> {
-        (self)(input)
+        (self)(input, state)
     }
 }
 
@@ -491,6 +501,8 @@ mod tests {
     use std::collections::VecDeque;
 
     use bytes::Buf;
+
+    use crate::ExtractFunction;
 
     use super::{ByteStream, Extract, ParseAny, ParseResult, ParseWhen, Repeatable};
 
@@ -689,7 +701,10 @@ mod tests {
         assert_matches!(res, ParseResult::Partial(_state));
     }
 
-    fn reverse(input: &mut ByteStream) -> ParseResult<ByteStream, ByteStream> {
+    fn reverse(
+        input: &mut ByteStream,
+        _state: Option<ByteStream>,
+    ) -> ParseResult<ByteStream, ByteStream> {
         let mut d = VecDeque::new();
         for b in input.iter().cloned() {
             d.push_front(b);
@@ -699,10 +714,10 @@ mod tests {
         ParseResult::Match(output)
     }
 
-    fn make_reverse(i: usize) -> impl Fn(&mut ByteStream) -> ParseResult<ByteStream, ByteStream> {
-        move |bs| {
+    fn make_reverse(i: usize) -> impl ExtractFunction {
+        move |bs, state| {
             let mut bs1 = bs.take_before(i);
-            reverse(&mut bs1)
+            reverse(&mut bs1, state)
         }
     }
 
