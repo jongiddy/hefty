@@ -103,12 +103,74 @@ impl ByteStream {
     }
 
     pub fn take_before(&mut self, pos: usize) -> Self {
-        if pos == self.remaining() {
-            return std::mem::take(self);
+        if pos == 0 {
+            return ByteStream::default();
         }
-        let byte_stream = self.get_before(pos);
-        self.advance(pos);
-        byte_stream
+        match &mut self.chunks {
+            ByteChunks::Empty => {
+                panic!("cannot take {pos} bytes from empty stream");
+            }
+            ByteChunks::One(bytes) => match pos.cmp(&bytes.len()) {
+                std::cmp::Ordering::Less => ByteStream {
+                    chunks: ByteChunks::One(bytes.split_to(pos)),
+                },
+                std::cmp::Ordering::Equal => std::mem::take(self),
+                std::cmp::Ordering::Greater => {
+                    panic!("cannot take {pos} bytes from stream");
+                }
+            },
+            ByteChunks::Multiple(chunks) => {
+                let mut nchunk = 0;
+                let mut nbytes = pos;
+                for bytes in chunks.iter_mut() {
+                    if nbytes < bytes.len() {
+                        if nchunk == 0 {
+                            return ByteStream {
+                                chunks: ByteChunks::One(bytes.split_to(pos)),
+                            };
+                        } else {
+                            break;
+                        }
+                    } else {
+                        nchunk += 1;
+                        nbytes -= bytes.len();
+                        if nbytes == 0 {
+                            break;
+                        }
+                    }
+                }
+                assert!(nchunk != 0);
+                if nchunk == chunks.len() {
+                    if nbytes == 0 {
+                        return std::mem::take(self);
+                    } else {
+                        panic!("cannot take {pos} bytes from stream");
+                    }
+                }
+                if nchunk == 1 && nbytes == 0 {
+                    return ByteStream::from(chunks.pop_front().unwrap());
+                }
+                if nchunk == chunks.len() - 1 {
+                    let bytes = if nbytes == 0 {
+                        chunks.pop_back().unwrap()
+                    } else {
+                        chunks.back_mut().unwrap().split_off(nbytes)
+                    };
+                    return std::mem::replace(self, ByteStream::from(bytes));
+                }
+                // Both sides will contain multiple chunks
+                let mut back_chunks = chunks.split_off(nchunk);
+                if nbytes > 0 {
+                    chunks.push_back(back_chunks.front_mut().unwrap().split_to(nbytes));
+                }
+                std::mem::replace(
+                    self,
+                    ByteStream {
+                        chunks: ByteChunks::Multiple(back_chunks),
+                    },
+                )
+            }
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -175,16 +237,24 @@ impl ByteStream {
 
 impl From<Bytes> for ByteStream {
     fn from(bytes: Bytes) -> Self {
-        ByteStream {
-            chunks: ByteChunks::One(bytes),
+        if bytes.is_empty() {
+            ByteStream::default()
+        } else {
+            ByteStream {
+                chunks: ByteChunks::One(bytes),
+            }
         }
     }
 }
 
 impl From<&'static str> for ByteStream {
     fn from(s: &'static str) -> Self {
-        ByteStream {
-            chunks: ByteChunks::One(Bytes::from_static(s.as_bytes())),
+        if s.is_empty() {
+            ByteStream::default()
+        } else {
+            ByteStream {
+                chunks: ByteChunks::One(Bytes::from_static(s.as_bytes())),
+            }
         }
     }
 }
@@ -257,6 +327,46 @@ impl ToString for ByteStream {
                 }
                 String::from_utf8_lossy(&vec).into_owned()
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+
+    use bytes::Bytes;
+
+    use super::{ByteChunks, ByteStream};
+
+    #[test]
+    fn test_single_byte_take() {
+        let s = "abcdefghijklmnopqrstuvwxyz";
+        for i in 0..=s.len() {
+            let mut back = ByteStream::from(s);
+            let front = back.take_before(i);
+            let (expected_front, expected_back) = s.split_at(i);
+            assert_eq!(front.to_string(), expected_front);
+            assert_eq!(back.to_string(), expected_back);
+        }
+    }
+
+    #[test]
+    fn test_multi_byte_take() {
+        let s = "abcdefghijklmnopqrstuvwxyz";
+        for i in 0..=s.len() {
+            let mut back = ByteStream {
+                chunks: ByteChunks::Multiple(
+                    s.as_bytes()
+                        .chunks(6)
+                        .map(Bytes::from_static)
+                        .collect::<VecDeque<_>>(),
+                ),
+            };
+            let front = back.take_before(i);
+            let (expected_front, expected_back) = s.split_at(i);
+            assert_eq!(front.to_string(), expected_front);
+            assert_eq!(back.to_string(), expected_back);
         }
     }
 }
