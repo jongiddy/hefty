@@ -37,7 +37,7 @@ impl<InnerParser> OptionalParser<InnerParser> {
 
 impl<InnerParser> Extract for OptionalParser<InnerParser>
 where
-    InnerParser: Extract,
+    InnerParser: Extract<Output = ByteStream>,
 {
     type State = (InnerParser::State, ByteStream);
 
@@ -63,12 +63,13 @@ where
 
 trait Extract {
     type State;
+    type Output = ByteStream;
 
     fn extract(
         &self,
         input: &mut ByteStream,
         state: Option<Self::State>,
-    ) -> ParseResult<Self::State, ByteStream>;
+    ) -> ParseResult<Self::State, Self::Output>;
 }
 
 trait Repeatable: Extract + Sized {
@@ -495,6 +496,82 @@ where
     }
 }
 
+enum TupleState2<E0, E1>
+where
+    E0: Extract<Output = ByteStream>,
+    E1: Extract<Output = ByteStream>,
+{
+    S0(Option<E0::State>),
+    S1(Option<E1::State>, (ByteStream,)),
+    Done((ByteStream, ByteStream)),
+}
+
+struct TupleSequence2<E0, E1> {
+    tuple: (E0, E1),
+}
+
+impl<E0, E1> Extract for TupleSequence2<E0, E1>
+where
+    E0: Extract<Output = ByteStream>,
+    E1: Extract<Output = ByteStream>,
+{
+    type State = TupleState2<E0, E1>;
+    type Output = (ByteStream, ByteStream);
+
+    fn extract(
+        &self,
+        input: &mut ByteStream,
+        state: Option<Self::State>,
+    ) -> ParseResult<Self::State, Self::Output> {
+        let mut state = state.unwrap_or(TupleState2::S0(None));
+        loop {
+            state = match state {
+                TupleState2::S0(inner_state) => match self.tuple.0.extract(input, inner_state) {
+                    ParseResult::NoMatch => {
+                        return ParseResult::NoMatch;
+                    }
+                    ParseResult::Partial(inner_state) => {
+                        return ParseResult::Partial(TupleState2::S0(Some(inner_state)));
+                    }
+                    ParseResult::Match(output) => TupleState2::S1(None, (output,)),
+                },
+                TupleState2::S1(inner_state, out) => {
+                    match self.tuple.1.extract(input, inner_state) {
+                        ParseResult::NoMatch => {
+                            return ParseResult::NoMatch;
+                        }
+                        ParseResult::Partial(inner_state) => {
+                            return ParseResult::Partial(TupleState2::S1(Some(inner_state), out));
+                        }
+                        ParseResult::Match(output) => TupleState2::Done((out.0, output)),
+                    }
+                }
+                TupleState2::Done(output) => {
+                    return ParseResult::Match(output);
+                }
+            }
+        }
+    }
+}
+
+trait ExtractTuple {
+    type TupleSequence;
+
+    fn seq(self) -> Self::TupleSequence;
+}
+
+impl<E0, E1> ExtractTuple for (E0, E1)
+where
+    E0: Extract,
+    E1: Extract,
+{
+    type TupleSequence = TupleSequence2<E0, E1>;
+
+    fn seq(self) -> Self::TupleSequence {
+        TupleSequence2 { tuple: self }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::assert_matches::assert_matches;
@@ -502,7 +579,7 @@ mod tests {
 
     use bytes::Buf;
 
-    use crate::ExtractFunction;
+    use crate::{ExtractFunction, ExtractTuple};
 
     use super::{ByteStream, Extract, ParseAny, ParseResult, ParseWhen, Repeatable};
 
@@ -730,5 +807,27 @@ mod tests {
         let mut input = ByteStream::from("helloworld");
         let res = make_reverse(6).extract(&mut input, None);
         assert_matches!(res, ParseResult::Match(output) if output.to_string() == "wolleh");
+    }
+
+    #[test]
+    fn test_sequence() {
+        let mut input = ByteStream::from("hello3a");
+        let res = ("hello", char::when(|c: char| c.is_digit(10)))
+            .seq()
+            .extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match((out1, out2)) if out1.to_string() == "hello" && out2.to_string() == "3");
+
+        let mut buffer = ByteStream::from("hello3a");
+        let mut input = buffer.take_before(3);
+        let res = ("hello", char::when(char::is_alphabetic))
+            .seq()
+            .extract(&mut input, None);
+        let ParseResult::Partial(state) = res else {
+            panic!("{res:?}");
+        };
+        let res = ("hello", char::when(char::is_alphabetic))
+            .seq()
+            .extract(&mut buffer, Some(state));
+        assert_matches!(res, ParseResult::NoMatch);
     }
 }
