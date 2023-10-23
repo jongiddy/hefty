@@ -29,6 +29,7 @@ struct OptionalParser<InnerParser> {
     inner: InnerParser,
 }
 
+#[allow(dead_code)]
 impl<InnerParser> OptionalParser<InnerParser> {
     fn new(inner: InnerParser) -> Self {
         Self { inner }

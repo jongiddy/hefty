@@ -1,5 +1,4 @@
 use std::collections::VecDeque;
-use std::string::FromUtf8Error;
 
 use bytes::{Buf, Bytes};
 use either::Either;
@@ -77,29 +76,6 @@ impl ByteStream {
             }
         }
         count
-    }
-
-    fn get_before(&self, mut pos: usize) -> Self {
-        assert!(pos <= self.remaining());
-        let mut byte_stream = ByteStream::default();
-        match &self.chunks {
-            ByteChunks::Empty => {}
-            ByteChunks::One(bytes) => {
-                byte_stream.push_bytes(bytes.slice(..pos));
-            }
-            ByteChunks::Multiple(chunks) => {
-                for bytes in chunks {
-                    if bytes.len() < pos {
-                        byte_stream.push_bytes(bytes.slice(..pos));
-                        break;
-                    } else {
-                        byte_stream.push_bytes(bytes.clone());
-                        pos -= bytes.len();
-                    }
-                }
-            }
-        }
-        byte_stream
     }
 
     pub fn take_before(&mut self, pos: usize) -> Self {
@@ -203,35 +179,6 @@ impl ByteStream {
             ByteChunks::One(bytes) => Either::Left(Either::Right(bytes.iter())),
             ByteChunks::Multiple(v) => Either::Right(v.iter().flat_map(|bytes| bytes.iter())),
         }
-    }
-
-    fn into_iter(self) -> impl Iterator<Item = u8> {
-        match self.chunks {
-            ByteChunks::Empty => Either::Left(Bytes::new().into_iter()),
-            ByteChunks::One(bytes) => Either::Left(bytes.into_iter()),
-            ByteChunks::Multiple(v) => {
-                Either::Right(v.into_iter().flat_map(|bytes| bytes.into_iter()))
-            }
-        }
-    }
-
-    fn into_vec(self) -> Vec<u8> {
-        match self.chunks {
-            ByteChunks::Empty => Vec::new(),
-            ByteChunks::One(bytes) => bytes.into(),
-            ByteChunks::Multiple(chunks) => {
-                let mut bytes_iter = chunks.into_iter();
-                let mut vec = Vec::from(bytes_iter.next().unwrap());
-                for bytes in bytes_iter {
-                    vec.extend_from_slice(&*bytes)
-                }
-                vec
-            }
-        }
-    }
-
-    fn into_string(self) -> Result<String, FromUtf8Error> {
-        String::from_utf8(self.into_vec())
     }
 }
 
