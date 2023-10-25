@@ -497,6 +497,67 @@ where
     }
 }
 
+struct TupleAny2<E0, E1>
+where
+    E0: Extract,
+    E1: Extract,
+{
+    tuple: (E0, E1),
+}
+
+impl<E0, E1> Extract for TupleAny2<E0, E1>
+where
+    E0: Extract<Output = ByteStream>,
+    E1: Extract<Output = ByteStream>,
+{
+    type State = (Option<Option<E0::State>>, Option<Option<E1::State>>);
+    type Output = ByteStream;
+
+    fn extract(
+        &self,
+        input: &mut ByteStream,
+        state: Option<Self::State>,
+    ) -> ParseResult<Self::State, Self::Output> {
+        let mut exhausted = true;
+        let mut state = state.unwrap_or((Some(None), Some(None)));
+        if let Some(inner_state) = &mut state.0 {
+            let mut input1 = input.clone();
+            match self.tuple.0.extract(&mut input1, inner_state.take()) {
+                ParseResult::NoMatch => {
+                    state.0 = None;
+                }
+                ParseResult::Partial(new_state) => {
+                    *inner_state = Some(new_state);
+                    exhausted = false;
+                }
+                ParseResult::Match(output) => {
+                    *input = input1;
+                    return ParseResult::Match(output);
+                }
+            }
+        }
+        if let Some(inner_state) = &mut state.1 {
+            let mut input1 = input.clone();
+            match self.tuple.1.extract(&mut input1, inner_state.take()) {
+                ParseResult::NoMatch => state.1 = None,
+                ParseResult::Partial(new_state) => {
+                    *inner_state = Some(new_state);
+                    exhausted = false;
+                }
+                ParseResult::Match(output) => {
+                    *input = input1;
+                    return ParseResult::Match(output);
+                }
+            }
+        }
+        if exhausted {
+            return ParseResult::NoMatch;
+        } else {
+            return ParseResult::Partial(state);
+        }
+    }
+}
+
 enum TupleState2<E0, E1>
 where
     E0: Extract<Output = ByteStream>,
@@ -556,7 +617,10 @@ where
 }
 
 trait ExtractTuple {
+    type TupleAny;
     type TupleSequence;
+
+    fn any(self) -> Self::TupleAny;
 
     fn seq(self) -> Self::TupleSequence;
 }
@@ -566,8 +630,12 @@ where
     E0: Extract,
     E1: Extract,
 {
+    type TupleAny = TupleAny2<E0, E1>;
     type TupleSequence = TupleSequence2<E0, E1>;
 
+    fn any(self) -> Self::TupleAny {
+        TupleAny2 { tuple: self }
+    }
     fn seq(self) -> Self::TupleSequence {
         TupleSequence2 { tuple: self }
     }
@@ -830,5 +898,25 @@ mod tests {
             .seq()
             .extract(&mut buffer, Some(state));
         assert_matches!(res, ParseResult::NoMatch);
+    }
+
+    #[test]
+    fn test_any() {
+        let mut input = ByteStream::from("hello3a");
+        let res = ("hello", char::when(|c: char| c.is_digit(10)))
+            .any()
+            .extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "hello");
+        let res = ("hello", char::when(|c: char| c.is_digit(10)))
+            .any()
+            .extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "3");
+
+        let mut buffer = ByteStream::from("hello3a");
+        let mut input = buffer.take_before(3);
+        let res = ("hello", char::when(char::is_alphabetic))
+            .any()
+            .extract(&mut input, None);
+        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "h");
     }
 }
