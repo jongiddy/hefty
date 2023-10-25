@@ -38,19 +38,21 @@ impl<InnerParser> OptionalParser<InnerParser> {
 
 impl<InnerParser> Extract for OptionalParser<InnerParser>
 where
-    InnerParser: Extract<Output = ByteStream>,
+    InnerParser: Extract,
+    InnerParser::Output: Default,
 {
     type State = (Option<InnerParser::State>, ByteStream);
+    type Output = InnerParser::Output;
 
     fn extract(
         &self,
         input: ByteStream,
         state: Option<Self::State>,
-    ) -> ParseResult<Self::State, ByteStream> {
+    ) -> ParseResult<Self::State, InnerParser::Output> {
         let (inner_state, mut saved) = state.unwrap_or((None, ByteStream::default()));
         saved.append(&input);
         match self.inner.extract(input, inner_state) {
-            ParseResult::NoMatch => ParseResult::Match(ByteStream::default(), saved),
+            ParseResult::NoMatch => ParseResult::Match(Self::Output::default(), saved),
             ParseResult::Partial(inner_state) => ParseResult::Partial((Some(inner_state), saved)),
             ParseResult::Match(output, input) => ParseResult::Match(output, input),
         }
@@ -565,6 +567,13 @@ struct TupleSequence2<E0, E1> {
     tuple: (E0, E1),
 }
 
+impl<E0, E1> Repeatable for TupleSequence2<E0, E1>
+where
+    E0: Extract<Output = ByteStream>,
+    E1: Extract<Output = ByteStream>,
+{
+}
+
 impl<E0, E1> Extract for TupleSequence2<E0, E1>
 where
     E0: Extract<Output = ByteStream>,
@@ -984,6 +993,31 @@ mod tests {
         else {
             panic!()
         };
+    }
+
+    #[test]
+    fn test_optional_sequence() {
+        let input = ByteStream::from("hello, world!");
+        let ParseResult::Match((out1, out2), input) =
+            ("hello", char::when(|c: char| c.is_digit(10)))
+                .seq()
+                .optional()
+                .extract(input, None)
+        else {
+            panic!()
+        };
+        assert!(out1.is_empty());
+        assert!(out2.is_empty());
+        assert_eq!(input.to_string(), "hello, world!");
+
+        let ParseResult::Match((out1, out2), input) =
+            ("hello, ", "world!").seq().optional().extract(input, None)
+        else {
+            panic!()
+        };
+        assert_eq!(out1.to_string(), "hello, ");
+        assert_eq!(out2.to_string(), "world!");
+        assert!(input.is_empty());
     }
 
     #[test]
