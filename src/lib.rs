@@ -12,7 +12,7 @@ mod byte_stream;
 enum ParseResult<State, Output> {
     NoMatch,
     Partial(State),
-    Match(Output),
+    Match(Output, ByteStream),
 }
 
 impl<State, Output> std::fmt::Debug for ParseResult<State, Output> {
@@ -20,7 +20,7 @@ impl<State, Output> std::fmt::Debug for ParseResult<State, Output> {
         match self {
             Self::NoMatch => write!(f, "NoMatch"),
             Self::Partial(_arg0) => write!(f, "Partial"),
-            Self::Match(_arg0) => write!(f, "Match"),
+            Self::Match(_arg0, _arg1) => write!(f, "Match"),
         }
     }
 }
@@ -40,24 +40,19 @@ impl<InnerParser> Extract for OptionalParser<InnerParser>
 where
     InnerParser: Extract<Output = ByteStream>,
 {
-    type State = (InnerParser::State, ByteStream);
+    type State = (Option<InnerParser::State>, ByteStream);
 
     fn extract(
         &self,
-        input: &mut ByteStream,
+        input: ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, ByteStream> {
-        let (inner_state, mut saved) = state
-            .map(|(inner_state, saved)| (Some(inner_state), saved))
-            .unwrap_or((None, ByteStream::default()));
-        saved.append(input);
+        let (inner_state, mut saved) = state.unwrap_or((None, ByteStream::default()));
+        saved.append(&input);
         match self.inner.extract(input, inner_state) {
-            ParseResult::NoMatch => {
-                *input = saved;
-                ParseResult::Match(ByteStream::default())
-            }
-            ParseResult::Partial(inner_state) => ParseResult::Partial((inner_state, saved)),
-            ParseResult::Match(output) => ParseResult::Match(output),
+            ParseResult::NoMatch => ParseResult::Match(ByteStream::default(), saved),
+            ParseResult::Partial(inner_state) => ParseResult::Partial((Some(inner_state), saved)),
+            ParseResult::Match(output, input) => ParseResult::Match(output, input),
         }
     }
 }
@@ -68,7 +63,7 @@ trait Extract {
 
     fn extract(
         &self,
-        input: &mut ByteStream,
+        input: ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, Self::Output>;
 }
@@ -99,18 +94,18 @@ impl Extract for u8 {
 
     fn extract(
         &self,
-        input: &mut ByteStream,
+        mut input: ByteStream,
         _state: Option<Self::State>,
     ) -> ParseResult<Self::State, ByteStream> {
-        if !input.is_empty() {
+        if input.is_empty() {
+            ParseResult::Partial(())
+        } else {
             let output = input.take_before(1);
             if output.iter().next().unwrap() == self {
-                ParseResult::Match(output)
+                ParseResult::Match(output, input)
             } else {
                 ParseResult::NoMatch
             }
-        } else {
-            ParseResult::Partial(())
         }
     }
 }
@@ -122,7 +117,7 @@ impl<const N: usize> Extract for [u8; N] {
 
     fn extract(
         &self,
-        input: &mut ByteStream,
+        mut input: ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, ByteStream> {
         let mut bytes = self.as_slice();
@@ -131,7 +126,7 @@ impl<const N: usize> Extract for [u8; N] {
         let matched = input.common_prefix_length(bytes);
         if matched == bytes.len() {
             output.extend(input.take_before(matched));
-            ParseResult::Match(output)
+            ParseResult::Match(output, input)
         } else if matched == input.remaining() {
             output.extend(input.take_before(matched));
             ParseResult::Partial((seen + matched, output))
@@ -150,11 +145,11 @@ impl Extract for AnyByteParser {
 
     fn extract(
         &self,
-        input: &mut ByteStream,
+        mut input: ByteStream,
         _state: Option<Self::State>,
     ) -> ParseResult<Self::State, ByteStream> {
         if input.has_remaining() {
-            ParseResult::Match(input.take_before(1))
+            ParseResult::Match(input.take_before(1), input)
         } else {
             ParseResult::Partial(())
         }
@@ -181,12 +176,12 @@ where
 
     fn extract(
         &self,
-        input: &mut ByteStream,
+        mut input: ByteStream,
         _state: Option<Self::State>,
     ) -> ParseResult<Self::State, ByteStream> {
         let first = input.iter().next().cloned();
         match first {
-            Some(b) if (self.0)(b) => ParseResult::Match(input.take_before(1)),
+            Some(b) if (self.0)(b) => ParseResult::Match(input.take_before(1), input),
             Some(_) => ParseResult::NoMatch,
             None => ParseResult::Partial(()),
         }
@@ -216,12 +211,12 @@ where
 
     fn extract(
         &self,
-        input: &mut ByteStream,
+        mut input: ByteStream,
         _state: Option<Self::State>,
     ) -> ParseResult<Self::State, ByteStream> {
         let first = input.iter().next().cloned();
         match first {
-            Some(b) if (self.0)(&b) => ParseResult::Match(input.take_before(1)),
+            Some(b) if (self.0)(&b) => ParseResult::Match(input.take_before(1), input),
             Some(_) => ParseResult::NoMatch,
             None => ParseResult::Partial(()),
         }
@@ -246,7 +241,7 @@ impl Extract for char {
 
     fn extract(
         &self,
-        input: &mut ByteStream,
+        mut input: ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, ByteStream> {
         let mut char_buf = [0u8; 4];
@@ -256,7 +251,7 @@ impl Extract for char {
         let matched = input.common_prefix_length(bytes);
         if matched == bytes.len() {
             output.extend(input.take_before(matched));
-            ParseResult::Match(output)
+            ParseResult::Match(output, input)
         } else if matched == input.remaining() {
             output.extend(input.take_before(matched));
             seen += matched as u8;
@@ -274,7 +269,7 @@ impl Extract for &str {
 
     fn extract(
         &self,
-        input: &mut ByteStream,
+        mut input: ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, ByteStream> {
         let mut bytes = self.as_bytes();
@@ -283,7 +278,7 @@ impl Extract for &str {
         let matched = input.common_prefix_length(bytes);
         if matched == bytes.len() {
             output.extend(input.take_before(matched));
-            ParseResult::Match(output)
+            ParseResult::Match(output, input)
         } else if matched == input.remaining() {
             output.extend(input.take_before(matched));
             seen += matched;
@@ -303,7 +298,7 @@ impl Extract for AnyCharParser {
 
     fn extract(
         &self,
-        input: &mut ByteStream,
+        mut input: ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, ByteStream> {
         let (mut required, mut output) = state.unwrap_or((0, ByteStream::default()));
@@ -323,11 +318,11 @@ impl Extract for AnyCharParser {
         let input_len = input.remaining();
         if input_len < required {
             required -= input_len;
-            output.append(&input.take_before(input_len));
+            output.extend(input.take_before(input_len));
             ParseResult::Partial((required, output))
         } else {
-            output.append(&input.take_before(required));
-            ParseResult::Match(output)
+            output.extend(input.take_before(required));
+            ParseResult::Match(output, input)
         }
     }
 }
@@ -352,7 +347,7 @@ where
 
     fn extract(
         &self,
-        input: &mut ByteStream,
+        mut input: ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, ByteStream> {
         let (mut required, mut output) = state.unwrap_or((0, ByteStream::default()));
@@ -371,10 +366,10 @@ where
         }
         let input_len = input.remaining();
         if input_len < required {
-            output.append(&input.take_before(input_len));
+            output.extend(input.take_before(input_len));
             ParseResult::Partial((required - input_len, output))
         } else {
-            output.append(&input.take_before(required));
+            output.extend(input.take_before(required));
             let mut bytes = [0; 4];
             let len = output.fill_slice(&mut bytes);
             match std::str::from_utf8(&bytes[..len]) {
@@ -383,7 +378,7 @@ where
                         return ParseResult::NoMatch;
                     };
                     if (self.0)(c) {
-                        ParseResult::Match(output)
+                        ParseResult::Match(output, input)
                     } else {
                         ParseResult::NoMatch
                     }
@@ -417,7 +412,7 @@ where
 
     fn extract(
         &self,
-        input: &mut ByteStream,
+        mut input: ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, ByteStream> {
         let (mut required, mut output) = state.unwrap_or((0, ByteStream::default()));
@@ -436,10 +431,10 @@ where
         }
         let input_len = input.remaining();
         if input_len < required {
-            output.append(&input.take_before(input_len));
+            output.extend(input.take_before(input_len));
             ParseResult::Partial((required - input_len, output))
         } else {
-            output.append(&input.take_before(required));
+            output.extend(input.take_before(required));
             let mut bytes = [0; 4];
             let len = output.fill_slice(&mut bytes);
             match std::str::from_utf8(&bytes[..len]) {
@@ -448,7 +443,7 @@ where
                         return ParseResult::NoMatch;
                     };
                     if (self.0)(&c) {
-                        ParseResult::Match(output)
+                        ParseResult::Match(output, input)
                     } else {
                         ParseResult::NoMatch
                     }
@@ -473,12 +468,12 @@ where
 }
 
 trait ExtractFunction:
-    Fn(&mut ByteStream, Option<ByteStream>) -> ParseResult<ByteStream, ByteStream>
+    Fn(ByteStream, Option<ByteStream>) -> ParseResult<ByteStream, ByteStream>
 {
 }
 
 impl<T> ExtractFunction for T where
-    T: Fn(&mut ByteStream, Option<ByteStream>) -> ParseResult<ByteStream, ByteStream>
+    T: Fn(ByteStream, Option<ByteStream>) -> ParseResult<ByteStream, ByteStream>
 {
 }
 
@@ -490,7 +485,7 @@ where
 
     fn extract(
         &self,
-        input: &mut ByteStream,
+        input: ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, ByteStream> {
         (self)(input, state)
@@ -515,14 +510,14 @@ where
 
     fn extract(
         &self,
-        input: &mut ByteStream,
+        input: ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, Self::Output> {
         let mut exhausted = true;
         let mut state = state.unwrap_or((Some(None), Some(None)));
         if let Some(inner_state) = &mut state.0 {
-            let mut input1 = input.clone();
-            match self.tuple.0.extract(&mut input1, inner_state.take()) {
+            let input1 = input.clone();
+            match self.tuple.0.extract(input1, inner_state.take()) {
                 ParseResult::NoMatch => {
                     state.0 = None;
                 }
@@ -530,23 +525,21 @@ where
                     *inner_state = Some(new_state);
                     exhausted = false;
                 }
-                ParseResult::Match(output) => {
-                    *input = input1;
-                    return ParseResult::Match(output);
+                ParseResult::Match(output, input) => {
+                    return ParseResult::Match(output, input);
                 }
             }
         }
         if let Some(inner_state) = &mut state.1 {
-            let mut input1 = input.clone();
-            match self.tuple.1.extract(&mut input1, inner_state.take()) {
+            let input1 = input.clone();
+            match self.tuple.1.extract(input1, inner_state.take()) {
                 ParseResult::NoMatch => state.1 = None,
                 ParseResult::Partial(new_state) => {
                     *inner_state = Some(new_state);
                     exhausted = false;
                 }
-                ParseResult::Match(output) => {
-                    *input = input1;
-                    return ParseResult::Match(output);
+                ParseResult::Match(output, input) => {
+                    return ParseResult::Match(output, input);
                 }
             }
         }
@@ -582,12 +575,12 @@ where
 
     fn extract(
         &self,
-        input: &mut ByteStream,
+        mut input: ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, Self::Output> {
         let mut state = state.unwrap_or(TupleState2::S0(None));
         loop {
-            state = match state {
+            (state, input) = match state {
                 TupleState2::S0(inner_state) => match self.tuple.0.extract(input, inner_state) {
                     ParseResult::NoMatch => {
                         return ParseResult::NoMatch;
@@ -595,7 +588,7 @@ where
                     ParseResult::Partial(inner_state) => {
                         return ParseResult::Partial(TupleState2::S0(Some(inner_state)));
                     }
-                    ParseResult::Match(output) => TupleState2::S1(None, (output,)),
+                    ParseResult::Match(output, input) => (TupleState2::S1(None, (output,)), input),
                 },
                 TupleState2::S1(inner_state, out) => {
                     match self.tuple.1.extract(input, inner_state) {
@@ -605,11 +598,13 @@ where
                         ParseResult::Partial(inner_state) => {
                             return ParseResult::Partial(TupleState2::S1(Some(inner_state), out));
                         }
-                        ParseResult::Match(output) => TupleState2::Done((out.0, output)),
+                        ParseResult::Match(output, input) => {
+                            (TupleState2::Done((out.0, output)), input)
+                        }
                     }
                 }
                 TupleState2::Done(output) => {
-                    return ParseResult::Match(output);
+                    return ParseResult::Match(output, input);
                 }
             }
         }
@@ -655,200 +650,279 @@ mod tests {
     #[test]
     fn test_byte_literal() {
         let buffer = ByteStream::from("23");
-        let mut input = buffer.clone();
+        let input = buffer.clone();
         assert_eq!(input.remaining(), 2);
-        let res = b'2'.extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "2");
-        let res = b'3'.extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "3");
-        let res = b'4'.extract(&mut input, None);
-        assert_matches!(res, ParseResult::Partial(_));
+        let ParseResult::Match(output, input) = b'2'.extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "2");
+        let ParseResult::Match(output, input) = b'3'.extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "3");
+        let ParseResult::Partial(_) = b'4'.extract(input, None) else {
+            panic!()
+        };
 
-        let mut input = buffer.clone();
-        let res = b'3'.extract(&mut input, None);
-        assert_matches!(res, ParseResult::NoMatch);
+        let input = buffer.clone();
+        let ParseResult::NoMatch = b'3'.extract(input, None) else {
+            panic!()
+        };
     }
 
     #[test]
     fn test_byte_array_literal() {
         let buffer = ByteStream::from("hello, world!");
-        let mut input = buffer.clone();
-        let res = b"hello".extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "hello");
-        let res = b", ".extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == ", ");
-        let res = b" everyone!".extract(&mut input, None);
-        assert_matches!(res, ParseResult::NoMatch);
+        let input = buffer.clone();
+        let ParseResult::Match(output, input) = b"hello".extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "hello");
+        let ParseResult::Match(output, input) = b", ".extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), ", ");
+        let ParseResult::NoMatch = b" everyone!".extract(input, None) else {
+            panic!()
+        };
     }
 
     #[test]
     fn test_byte_any() {
         let buffer = ByteStream::from("A4");
-        let mut input = buffer.clone();
+        let input = buffer.clone();
         assert_eq!(input.remaining(), 2);
-        let res = u8::any().extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "A");
-        let res = u8::any().extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "4");
-        let res = u8::any().extract(&mut input, None);
-        assert_matches!(res, ParseResult::Partial(_state));
+        let ParseResult::Match(output, input) = u8::any().extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "A");
+        let ParseResult::Match(output, input) = u8::any().extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "4");
+        let ParseResult::Partial(_) = u8::any().extract(input, None) else {
+            panic!()
+        };
     }
 
     #[test]
     fn test_byte_when() {
         let buffer = ByteStream::from("A4");
-        let mut input = buffer.clone();
+        let input = buffer.clone();
         assert_eq!(input.remaining(), 2);
-        let res = u8::when(|b: u8| u8::is_ascii_alphabetic(&b)).extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "A");
-        let res = u8::when(|b: u8| u8::is_ascii_alphabetic(&b)).extract(&mut input.clone(), None);
-        assert_matches!(res, ParseResult::NoMatch);
-        let res = u8::when(|b: u8| u8::is_ascii_digit(&b)).extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "4");
-        let res = u8::when(|b: u8| u8::is_ascii_digit(&b)).extract(&mut input, None);
-        assert_matches!(res, ParseResult::Partial(_state));
+        let ParseResult::Match(output, input) =
+            u8::when(|b: u8| u8::is_ascii_alphabetic(&b)).extract(input, None)
+        else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "A");
+        let ParseResult::NoMatch =
+            u8::when(|b: u8| u8::is_ascii_alphabetic(&b)).extract(input.clone(), None)
+        else {
+            panic!()
+        };
+        let ParseResult::Match(output, input) =
+            u8::when(|b: u8| u8::is_ascii_digit(&b)).extract(input, None)
+        else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "4");
+        let ParseResult::Partial(_) = u8::when(|b: u8| u8::is_ascii_digit(&b)).extract(input, None)
+        else {
+            panic!()
+        };
     }
 
     #[test]
     fn test_byte_when_ref() {
         let buffer = ByteStream::from("A4");
-        let mut input = buffer.clone();
+        let input = buffer.clone();
         assert_eq!(input.remaining(), 2);
-        let res = u8::when(u8::is_ascii_alphabetic).extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "A");
-        let res = u8::when(u8::is_ascii_alphabetic).extract(&mut input.clone(), None);
-        assert_matches!(res, ParseResult::NoMatch);
-        let res = u8::when(u8::is_ascii_digit).extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "4");
-        let res = u8::when(u8::is_ascii_digit).extract(&mut input, None);
-        assert_matches!(res, ParseResult::Partial(_state));
+        let ParseResult::Match(output, input) =
+            u8::when(u8::is_ascii_alphabetic).extract(input, None)
+        else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "A");
+        let ParseResult::NoMatch = u8::when(u8::is_ascii_alphabetic).extract(input.clone(), None)
+        else {
+            panic!()
+        };
+        let ParseResult::Match(output, input) = u8::when(u8::is_ascii_digit).extract(input, None)
+        else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "4");
+        let ParseResult::Partial(_) = u8::when(u8::is_ascii_digit).extract(input, None) else {
+            panic!()
+        };
     }
 
     #[test]
     fn test_str_literal() {
         let buffer = ByteStream::from("hello, world!");
-        let mut input = buffer.clone();
-        let res = "hello".extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "hello");
-        let res = ", ".extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == ", ");
-        let res = " everyone!".extract(&mut input, None);
-        assert_matches!(res, ParseResult::NoMatch);
+        let input = buffer.clone();
+        let ParseResult::Match(output, input) = "hello".extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "hello");
+        let ParseResult::Match(output, input) = ", ".extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), ", ");
+        let ParseResult::NoMatch = " everyone!".extract(input, None) else {
+            panic!()
+        };
     }
 
     #[test]
     fn test_1_byte_char() {
         let buffer = ByteStream::from("23");
-        let mut input = buffer.clone();
+        let input = buffer.clone();
         assert_eq!(input.remaining(), 2);
-        let res = '2'.extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "2");
+        let ParseResult::Match(output, input) = '2'.extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "2");
         assert_eq!(input.iter().next(), Some(&b'3'));
-        let res = '2'.extract(&mut input, None);
-        assert_matches!(res, ParseResult::NoMatch);
+        let ParseResult::NoMatch = '2'.extract(input, None) else {
+            panic!()
+        };
     }
 
     #[test]
     fn test_multibyte_char() {
         let buffer = ByteStream::from("€4");
-        let mut input = buffer.clone();
+        let input = buffer.clone();
         assert_eq!(input.remaining(), 4);
-        let res = '€'.extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "€");
+        let ParseResult::Match(output, input) = '€'.extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "€");
         assert_eq!(input.iter().next(), Some(&b'4'));
-        let res = '€'.extract(&mut input, None);
-        assert_matches!(res, ParseResult::NoMatch);
+        let ParseResult::NoMatch = '€'.extract(input, None) else {
+            panic!()
+        };
 
-        let mut input = buffer.clone();
-        let res = char::any().extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "€");
-        let res = char::any().extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "4");
-        let res = char::any().extract(&mut input, None);
-        assert_matches!(res, ParseResult::Partial(_state));
+        let input = buffer.clone();
+        let ParseResult::Match(output, input) = char::any().extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "€");
+        let ParseResult::Match(output, input) = char::any().extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "4");
+        let ParseResult::Partial(_) = char::any().extract(input, None) else {
+            panic!()
+        };
 
-        let mut input = buffer.clone();
-        let res = char::when(char::is_alphabetic).extract(&mut input.clone(), None);
-        assert_matches!(res, ParseResult::NoMatch);
-        let res = char::when(|c: char| !c.is_alphabetic()).extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "€");
-        let res = char::when(|c| char::is_digit(c, 10)).extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "4");
-        let res = char::when(char::is_alphabetic).extract(&mut input, None);
-        assert_matches!(res, ParseResult::Partial(_state));
+        let input = buffer.clone();
+        let ParseResult::NoMatch = char::when(char::is_alphabetic).extract(input.clone(), None)
+        else {
+            panic!()
+        };
+        let ParseResult::Match(output, input) =
+            char::when(|c: char| !c.is_alphabetic()).extract(input, None)
+        else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "€");
+        let ParseResult::Match(output, input) =
+            char::when(|c| char::is_digit(c, 10)).extract(input, None)
+        else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "4");
+        let ParseResult::Partial(_) = char::when(char::is_alphabetic).extract(input, None) else {
+            panic!()
+        };
 
-        let mut input = buffer.clone();
-        let res = char::when(char::is_ascii_alphabetic).extract(&mut input.clone(), None);
-        assert_matches!(res, ParseResult::NoMatch);
+        let input = buffer.clone();
+        let ParseResult::NoMatch =
+            char::when(char::is_ascii_alphabetic).extract(input.clone(), None)
+        else {
+            panic!()
+        };
         // closure with ref arg does not get inferred for<'a> lifetime if placed in when arg
         let not_alphabetic = |c: &char| -> bool { !c.is_ascii_alphabetic() };
-        let res = char::when(not_alphabetic).extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "€");
-        let res = char::when(char::is_ascii_digit).extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "4");
-        let res = char::when(char::is_ascii_digit).extract(&mut input, None);
-        assert_matches!(res, ParseResult::Partial(_state));
+        let ParseResult::Match(output, input) = char::when(not_alphabetic).extract(input, None)
+        else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "€");
+        let ParseResult::Match(output, input) =
+            char::when(char::is_ascii_digit).extract(input, None)
+        else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "4");
+        let ParseResult::Partial(_) = char::when(char::is_ascii_digit).extract(input, None) else {
+            panic!()
+        };
     }
 
     #[test]
     fn test_multibyte_char_byte_by_byte() {
         let mut buffer = ByteStream::from("€4");
-        let mut input = buffer.take_before(1);
-        let res = '€'.extract(&mut input, None);
-        let ParseResult::Partial(state) = res else {
-            panic!("{res:?}");
+        let input = buffer.take_before(1);
+        let ParseResult::Partial(state) = '€'.extract(input, None) else {
+            panic!()
         };
-        assert!(input.is_empty());
-        let mut input = buffer.take_before(1);
-        let res = '€'.extract(&mut input, Some(state));
-        let ParseResult::Partial(state) = res else {
-            panic!("{res:?}");
+        let input = buffer.take_before(1);
+        let ParseResult::Partial(state) = '€'.extract(input, Some(state)) else {
+            panic!()
         };
-        assert!(input.is_empty());
-        let mut input = buffer;
-        let res = '€'.extract(&mut input, Some(state));
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "€");
+        let input = buffer;
+        let ParseResult::Match(output, input) = '€'.extract(input, Some(state)) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "€");
         assert_eq!(input.iter().next(), Some(&b'4'));
-        let res = '€'.extract(&mut input, None);
-        assert_matches!(res, ParseResult::NoMatch);
+        let ParseResult::NoMatch = '€'.extract(input, None) else {
+            panic!()
+        };
     }
 
     // A 3-byte symbol that matches until the last byte
     #[test]
     fn test_multibyte_char_nearly() {
         let mut buffer = ByteStream::from("€4");
-        let mut input = buffer.take_before(1);
-        let res = '₭'.extract(&mut input, None);
-        let ParseResult::Partial(state) = res else {
-            panic!("{res:?}");
+        let input = buffer.take_before(1);
+        let ParseResult::Partial(state) = '₭'.extract(input, None) else {
+            panic!()
         };
-        assert!(input.is_empty());
-        let mut input = buffer.take_before(1);
-        let res = '₭'.extract(&mut input, Some(state));
-        let ParseResult::Partial(state) = res else {
-            panic!("{res:?}");
+        let input = buffer.take_before(1);
+        let ParseResult::Partial(state) = '₭'.extract(input, Some(state)) else {
+            panic!()
         };
-        assert!(input.is_empty());
-        let mut input = buffer;
-        let res = '₭'.extract(&mut input, Some(state));
-        assert_matches!(res, ParseResult::NoMatch);
+        let input = buffer;
+        let output = '₭'.extract(input, Some(state));
+        assert_matches!(output, ParseResult::NoMatch);
     }
 
     #[test]
     fn test_optional() {
-        let mut input = ByteStream::from("helloworld");
-        let res = "hello".optional().extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "hello");
-        let res = ", ".optional().extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.is_empty());
-        let res = "world".optional().extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "world");
-        let res = "world".optional().extract(&mut input, None);
-        assert_matches!(res, ParseResult::Partial(_state));
+        let input = ByteStream::from("helloworld");
+        let ParseResult::Match(output, input) = "hello".optional().extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "hello");
+        let ParseResult::Match(output, input) = ", ".optional().extract(input, None) else {
+            panic!()
+        };
+        assert!(output.is_empty());
+        let ParseResult::Match(output, input) = "world".optional().extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "world");
+        let ParseResult::Partial(_) = "world".optional().extract(input, None) else {
+            panic!()
+        };
     }
 
     fn reverse(
-        input: &mut ByteStream,
+        input: ByteStream,
         _state: Option<ByteStream>,
     ) -> ParseResult<ByteStream, ByteStream> {
         let mut d = VecDeque::new();
@@ -857,66 +931,89 @@ mod tests {
         }
         let v = d.into_iter().collect::<Vec<_>>();
         let output = ByteStream::from(bytes::Bytes::from(v));
-        ParseResult::Match(output)
+        ParseResult::Match(output, ByteStream::default())
     }
 
     fn make_reverse(i: usize) -> impl ExtractFunction {
-        move |bs, state| {
-            let mut bs1 = bs.take_before(i);
-            reverse(&mut bs1, state)
+        move |mut bs, state| {
+            let bs1 = bs.take_before(i);
+            reverse(bs1, state)
         }
     }
 
     #[test]
     fn test_function() {
-        let mut input = ByteStream::from("helloworld");
-        let res = reverse.extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "dlrowolleh");
+        let input = ByteStream::from("helloworld");
+        let ParseResult::Match(output, _) = reverse.extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "dlrowolleh");
 
-        let mut input = ByteStream::from("helloworld");
-        let res = make_reverse(6).extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "wolleh");
+        let input = ByteStream::from("helloworld");
+        let ParseResult::Match(output, _) = make_reverse(6).extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "wolleh");
     }
 
     #[test]
     fn test_sequence() {
-        let mut input = ByteStream::from("hello3a");
-        let res = ("hello", char::when(|c: char| c.is_digit(10)))
-            .seq()
-            .extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match((out1, out2)) if out1.to_string() == "hello" && out2.to_string() == "3");
+        let input = ByteStream::from("hello3a");
+        let ParseResult::Match((out1, out2), input) =
+            ("hello", char::when(|c: char| c.is_digit(10)))
+                .seq()
+                .extract(input, None)
+        else {
+            panic!()
+        };
+        assert_eq!(out1.to_string(), "hello");
+        assert_eq!(out2.to_string(), "3");
+        assert_eq!(input.to_string(), "a");
 
         let mut buffer = ByteStream::from("hello3a");
-        let mut input = buffer.take_before(3);
-        let res = ("hello", char::when(char::is_alphabetic))
+        let input = buffer.take_before(3);
+        let ParseResult::Partial(state) = ("hello", char::when(char::is_alphabetic))
             .seq()
-            .extract(&mut input, None);
-        let ParseResult::Partial(state) = res else {
-            panic!("{res:?}");
+            .extract(input, None)
+        else {
+            panic!()
         };
-        let res = ("hello", char::when(char::is_alphabetic))
+        let ParseResult::NoMatch = ("hello", char::when(char::is_alphabetic))
             .seq()
-            .extract(&mut buffer, Some(state));
-        assert_matches!(res, ParseResult::NoMatch);
+            .extract(buffer, Some(state))
+        else {
+            panic!()
+        };
     }
 
     #[test]
     fn test_any() {
-        let mut input = ByteStream::from("hello3a");
-        let res = ("hello", char::when(|c: char| c.is_digit(10)))
+        let input = ByteStream::from("hello3a");
+        let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_digit(10)))
             .any()
-            .extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "hello");
-        let res = ("hello", char::when(|c: char| c.is_digit(10)))
+            .extract(input, None)
+        else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "hello");
+        let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_digit(10)))
             .any()
-            .extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "3");
+            .extract(input, None)
+        else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "3");
+        assert_eq!(input.to_string(), "a");
 
         let mut buffer = ByteStream::from("hello3a");
-        let mut input = buffer.take_before(3);
-        let res = ("hello", char::when(char::is_alphabetic))
+        let input = buffer.take_before(3);
+        let ParseResult::Match(output, input) = ("hello", char::when(char::is_alphabetic))
             .any()
-            .extract(&mut input, None);
-        assert_matches!(res, ParseResult::Match(output) if output.to_string() == "h");
+            .extract(input, None)
+        else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "h");
+        assert_eq!(input.to_string(), "el");
     }
 }
