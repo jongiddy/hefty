@@ -553,6 +553,122 @@ where
     }
 }
 
+struct TupleFirst2<E0, E1>
+where
+    E0: Extract,
+    E1: Extract,
+{
+    tuple: (E0, E1),
+}
+
+impl<E0, E1> Extract for TupleFirst2<E0, E1>
+where
+    E0: Extract<Output = ByteStream>,
+    E1: Extract<Output = ByteStream>,
+{
+    type State = (
+        Option<ParseResult<E0::State, ByteStream>>,
+        Option<ParseResult<E1::State, ByteStream>>,
+    );
+    type Output = ByteStream;
+
+    fn extract(
+        &self,
+        input: ByteStream,
+        state: Option<Self::State>,
+    ) -> ParseResult<Self::State, Self::Output> {
+        let mut first = true;
+        let mut state = state.unwrap_or((None, None));
+        state.0 = match state.0.take() {
+            Some(ParseResult::NoMatch) => Some(ParseResult::NoMatch),
+            Some(ParseResult::Partial(inner_state)) => {
+                let res = self.tuple.0.extract(input.clone(), Some(inner_state));
+                match res {
+                    ParseResult::NoMatch => Some(ParseResult::NoMatch),
+                    ParseResult::Partial(state) => {
+                        first = false;
+                        Some(ParseResult::Partial(state))
+                    }
+                    ParseResult::Match(output, input) => {
+                        if first {
+                            return ParseResult::Match(output, input);
+                        }
+                        Some(ParseResult::Match(output, input))
+                    }
+                }
+            }
+            Some(ParseResult::Match(output, input)) => {
+                if first {
+                    return ParseResult::Match(output, input);
+                }
+                Some(ParseResult::Match(output, input))
+            }
+            None => {
+                let res = self.tuple.0.extract(input.clone(), None);
+                match res {
+                    ParseResult::NoMatch => Some(ParseResult::NoMatch),
+                    ParseResult::Partial(state) => {
+                        first = false;
+                        Some(ParseResult::Partial(state))
+                    }
+                    ParseResult::Match(output, input) => {
+                        if first {
+                            return ParseResult::Match(output, input);
+                        }
+                        Some(ParseResult::Match(output, input))
+                    }
+                }
+            }
+        };
+        state.1 = match state.1.take() {
+            Some(ParseResult::NoMatch) => Some(ParseResult::NoMatch),
+            Some(ParseResult::Partial(inner_state)) => {
+                let res = self.tuple.1.extract(input.clone(), Some(inner_state));
+                match res {
+                    ParseResult::NoMatch => Some(ParseResult::NoMatch),
+                    ParseResult::Partial(state) => {
+                        first = false;
+                        Some(ParseResult::Partial(state))
+                    }
+                    ParseResult::Match(output, input) => {
+                        if first {
+                            return ParseResult::Match(output, input);
+                        }
+                        Some(ParseResult::Match(output, input))
+                    }
+                }
+            }
+            Some(ParseResult::Match(output, input)) => {
+                if first {
+                    return ParseResult::Match(output, input);
+                }
+                Some(ParseResult::Match(output, input))
+            }
+            None => {
+                let res = self.tuple.1.extract(input.clone(), None);
+                match res {
+                    ParseResult::NoMatch => Some(ParseResult::NoMatch),
+                    ParseResult::Partial(state) => {
+                        first = false;
+                        Some(ParseResult::Partial(state))
+                    }
+                    ParseResult::Match(output, input) => {
+                        if first {
+                            return ParseResult::Match(output, input);
+                        }
+                        Some(ParseResult::Match(output, input))
+                    }
+                }
+            }
+        };
+        if first {
+            return ParseResult::NoMatch;
+        } else {
+            return ParseResult::Partial(state);
+        }
+    }
+}
+
 enum TupleState2<E0, E1>
 where
     E0: Extract<Output = ByteStream>,
@@ -622,9 +738,12 @@ where
 
 trait ExtractTuple {
     type TupleAny;
+    type TupleFirst;
     type TupleSequence;
 
     fn any(self) -> Self::TupleAny;
+
+    fn first(self) -> Self::TupleFirst;
 
     fn seq(self) -> Self::TupleSequence;
 }
@@ -635,11 +754,17 @@ where
     E1: Extract,
 {
     type TupleAny = TupleAny2<E0, E1>;
+    type TupleFirst = TupleFirst2<E0, E1>;
     type TupleSequence = TupleSequence2<E0, E1>;
 
     fn any(self) -> Self::TupleAny {
         TupleAny2 { tuple: self }
     }
+
+    fn first(self) -> Self::TupleFirst {
+        TupleFirst2 { tuple: self }
+    }
+
     fn seq(self) -> Self::TupleSequence {
         TupleSequence2 { tuple: self }
     }
@@ -1038,7 +1163,32 @@ mod tests {
         };
         assert_eq!(output.to_string(), "3");
         assert_eq!(input.to_string(), "a");
+    }
 
+    #[test]
+    fn test_first() {
+        let input = ByteStream::from("hello3a");
+        let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_digit(10)))
+            .first()
+            .extract(input, None)
+        else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "hello");
+        let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_digit(10)))
+            .first()
+            .extract(input, None)
+        else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "3");
+        assert_eq!(input.to_string(), "a");
+    }
+
+    // any() finds the matching alphabetic character, even though "hello" might
+    // eventually match.
+    #[test]
+    fn test_precedence_any() {
         let mut buffer = ByteStream::from("hello3a");
         let input = buffer.take_before(3);
         let ParseResult::Match(output, input) = ("hello", char::when(char::is_alphabetic))
@@ -1049,5 +1199,27 @@ mod tests {
         };
         assert_eq!(output.to_string(), "h");
         assert_eq!(input.to_string(), "el");
+    }
+
+    // first() finds "hello" because it is first in the tuple even though the alphabetic character
+    // pattern matches earlier.
+    #[test]
+    fn test_precedence_first() {
+        let mut buffer = ByteStream::from("hello3a");
+        let input = buffer.take_before(3);
+        let ParseResult::Partial(state) = ("hello", char::when(char::is_alphabetic))
+            .first()
+            .extract(input, None)
+        else {
+            panic!()
+        };
+        let ParseResult::Match(output, input) = ("hello", char::when(char::is_alphabetic))
+            .first()
+            .extract(buffer, Some(state))
+        else {
+            panic!()
+        };
+        assert_eq!(output.to_string(), "hello");
+        assert_eq!(input.to_string(), "3a");
     }
 }
