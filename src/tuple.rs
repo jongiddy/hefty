@@ -182,8 +182,8 @@ where
     E1: Extract<Output = ByteStream>,
 {
     S0(Option<E0::State>),
-    S1(Option<E1::State>, (ByteStream,)),
-    Done((ByteStream, ByteStream)),
+    S1(Option<E1::State>, [ByteStream; 1]),
+    Done([ByteStream; 2]),
 }
 
 pub struct TupleSequence2<E0, E1> {
@@ -203,7 +203,7 @@ where
     E1: Extract<Output = ByteStream>,
 {
     type State = TupleState2<E0, E1>;
-    type Output = (ByteStream, ByteStream);
+    type Output = [ByteStream; 2];
 
     fn extract(
         &self,
@@ -220,18 +220,27 @@ where
                     ParseResult::Partial(inner_state) => {
                         return ParseResult::Partial(TupleState2::S0(Some(inner_state)));
                     }
-                    ParseResult::Match(output, input) => (TupleState2::S1(None, (output,)), input),
+                    ParseResult::Match(output, input) => (TupleState2::S1(None, [output]), input),
                 },
-                TupleState2::S1(inner_state, out) => {
+                TupleState2::S1(inner_state, old_output) => {
                     match self.tuple.1.extract(input, inner_state) {
                         ParseResult::NoMatch => {
                             return ParseResult::NoMatch;
                         }
                         ParseResult::Partial(inner_state) => {
-                            return ParseResult::Partial(TupleState2::S1(Some(inner_state), out));
+                            return ParseResult::Partial(TupleState2::S1(
+                                Some(inner_state),
+                                old_output,
+                            ));
                         }
                         ParseResult::Match(output, input) => {
-                            (TupleState2::Done((out.0, output)), input)
+                            let mut new_output = <[ByteStream; 2]>::default();
+                            old_output
+                                .into_iter()
+                                .chain(std::iter::once(output))
+                                .enumerate()
+                                .for_each(|(i, bs)| new_output[i] = bs);
+                            (TupleState2::Done(new_output), input)
                         }
                     }
                 }
@@ -285,7 +294,7 @@ mod tests {
     #[test]
     fn test_sequence() {
         let input = ByteStream::from("hello3a");
-        let ParseResult::Match((out1, out2), input) =
+        let ParseResult::Match([out1, out2], input) =
             ("hello", char::when(|c: char| c.is_digit(10)))
                 .seq()
                 .extract(input, None)
@@ -315,7 +324,7 @@ mod tests {
     #[test]
     fn test_optional_sequence() {
         let input = ByteStream::from("hello, world!");
-        let ParseResult::Match((out1, out2), input) =
+        let ParseResult::Match([out1, out2], input) =
             ("hello", char::when(|c: char| c.is_digit(10)))
                 .seq()
                 .optional()
@@ -327,7 +336,7 @@ mod tests {
         assert!(out2.is_empty());
         assert_eq!(input.to_string(), "hello, world!");
 
-        let ParseResult::Match((out1, out2), input) =
+        let ParseResult::Match([out1, out2], input) =
             ("hello, ", "world!").seq().optional().extract(input, None)
         else {
             panic!()

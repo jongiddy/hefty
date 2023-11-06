@@ -820,7 +820,7 @@ mod tests {
     #[test]
     fn test_sequence() {
         let input = ByteStream::from("hello3a");
-        let ParseResult::Match((out1, out2), input) =
+        let ParseResult::Match([out1, out2], input) =
             ("hello", char::when(|c: char| c.is_digit(10)))
                 .seq()
                 .extract(input, None)
@@ -850,7 +850,7 @@ mod tests {
     #[test]
     fn test_optional_sequence() {
         let input = ByteStream::from("hello, world!");
-        let ParseResult::Match((out1, out2), input) =
+        let ParseResult::Match([out1, out2], input) =
             ("hello", char::when(|c: char| c.is_digit(10)))
                 .seq()
                 .optional()
@@ -862,7 +862,7 @@ mod tests {
         assert!(out2.is_empty());
         assert_eq!(input.to_string(), "hello, world!");
 
-        let ParseResult::Match((out1, out2), input) =
+        let ParseResult::Match([out1, out2], input) =
             ("hello, ", "world!").seq().optional().extract(input, None)
         else {
             panic!()
