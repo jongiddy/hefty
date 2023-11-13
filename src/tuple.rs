@@ -1,20 +1,18 @@
+use typle::typle;
+
 use crate::byte_stream::ByteStream;
 use crate::{Extract, ParseResult, Repeatable};
 
-pub struct TupleAny2<E0, E1>
-where
-    E0: Extract,
-    E1: Extract,
-{
-    tuple: (E0, E1),
+pub struct TupleAny<T> {
+    tuple: T,
 }
 
-impl<E0, E1> Extract for TupleAny2<E0, E1>
+#[typle(Tuple for 2..=4)]
+impl<T> Extract for TupleAny<T>
 where
-    E0: Extract<Output = ByteStream>,
-    E1: Extract<Output = ByteStream>,
+    T: Tuple<impl Extract<Output = ByteStream>>,
 {
-    type State = (Option<Option<E0::State>>, Option<Option<E1::State>>);
+    type State = typle_expand!(Option<Option<T::State>>);
     type Output = ByteStream;
 
     fn extract(
@@ -23,32 +21,21 @@ where
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, Self::Output> {
         let mut exhausted = true;
-        let mut state = state.unwrap_or((Some(None), Some(None)));
-        if let Some(inner_state) = &mut state.0 {
-            let input1 = input.clone();
-            match self.tuple.0.extract(input1, inner_state.take()) {
-                ParseResult::NoMatch => {
-                    state.0 = None;
-                }
-                ParseResult::Partial(new_state) => {
-                    *inner_state = Some(new_state);
-                    exhausted = false;
-                }
-                ParseResult::Match(output, input) => {
-                    return ParseResult::Match(output, input);
-                }
-            }
-        }
-        if let Some(inner_state) = &mut state.1 {
-            let input1 = input.clone();
-            match self.tuple.1.extract(input1, inner_state.take()) {
-                ParseResult::NoMatch => state.1 = None,
-                ParseResult::Partial(new_state) => {
-                    *inner_state = Some(new_state);
-                    exhausted = false;
-                }
-                ParseResult::Match(output, input) => {
-                    return ParseResult::Match(output, input);
+        let mut state = state.unwrap_or(typle_expand!(Some(None)));
+        for typle_const!(i) in 0..T::LEN {
+            if let Some(inner_state) = &mut state[[i]] {
+                let input = input.clone();
+                match self.tuple[[i]].extract(input, inner_state.take()) {
+                    ParseResult::NoMatch => {
+                        state[[i]] = None;
+                    }
+                    ParseResult::Partial(new_state) => {
+                        *inner_state = Some(new_state);
+                        exhausted = false;
+                    }
+                    ParseResult::Match(output, input) => {
+                        return ParseResult::Match(output, input);
+                    }
                 }
             }
         }
@@ -60,23 +47,16 @@ where
     }
 }
 
-pub struct TupleFirst2<E0, E1>
-where
-    E0: Extract,
-    E1: Extract,
-{
-    tuple: (E0, E1),
+pub struct TupleFirst<T> {
+    tuple: T,
 }
 
-impl<E0, E1> Extract for TupleFirst2<E0, E1>
+#[typle(Tuple for 2..=4)]
+impl<T> Extract for TupleFirst<T>
 where
-    E0: Extract<Output = ByteStream>,
-    E1: Extract<Output = ByteStream>,
+    T: Tuple<impl Extract<Output = ByteStream>>,
 {
-    type State = (
-        Option<ParseResult<E0::State, ByteStream>>,
-        Option<ParseResult<E1::State, ByteStream>>,
-    );
+    type State = typle_expand!(Option<ParseResult<T::State, ByteStream>>);
     type Output = ByteStream;
 
     fn extract(
@@ -85,89 +65,50 @@ where
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, Self::Output> {
         let mut first = true;
-        let mut state = state.unwrap_or((None, None));
-        state.0 = match state.0.take() {
-            Some(ParseResult::NoMatch) => Some(ParseResult::NoMatch),
-            Some(ParseResult::Partial(inner_state)) => {
-                let res = self.tuple.0.extract(input.clone(), Some(inner_state));
-                match res {
-                    ParseResult::NoMatch => Some(ParseResult::NoMatch),
-                    ParseResult::Partial(state) => {
-                        first = false;
-                        Some(ParseResult::Partial(state))
-                    }
-                    ParseResult::Match(output, input) => {
-                        if first {
-                            return ParseResult::Match(output, input);
+        let mut state = state.unwrap_or(typle_expand!(None));
+        for typle_const!(i) in 0..T::LEN {
+            state[[i]] = match state[[i]].take() {
+                Some(ParseResult::NoMatch) => Some(ParseResult::NoMatch),
+                Some(ParseResult::Partial(inner_state)) => {
+                    let res = self.tuple[[i]].extract(input.clone(), Some(inner_state));
+                    match res {
+                        ParseResult::NoMatch => Some(ParseResult::NoMatch),
+                        ParseResult::Partial(state) => {
+                            first = false;
+                            Some(ParseResult::Partial(state))
                         }
-                        Some(ParseResult::Match(output, input))
-                    }
-                }
-            }
-            Some(ParseResult::Match(output, input)) => {
-                if first {
-                    return ParseResult::Match(output, input);
-                }
-                Some(ParseResult::Match(output, input))
-            }
-            None => {
-                let res = self.tuple.0.extract(input.clone(), None);
-                match res {
-                    ParseResult::NoMatch => Some(ParseResult::NoMatch),
-                    ParseResult::Partial(state) => {
-                        first = false;
-                        Some(ParseResult::Partial(state))
-                    }
-                    ParseResult::Match(output, input) => {
-                        if first {
-                            return ParseResult::Match(output, input);
+                        ParseResult::Match(output, input) => {
+                            if first {
+                                return ParseResult::Match(output, input);
+                            }
+                            Some(ParseResult::Match(output, input))
                         }
-                        Some(ParseResult::Match(output, input))
                     }
                 }
-            }
-        };
-        state.1 = match state.1.take() {
-            Some(ParseResult::NoMatch) => Some(ParseResult::NoMatch),
-            Some(ParseResult::Partial(inner_state)) => {
-                let res = self.tuple.1.extract(input.clone(), Some(inner_state));
-                match res {
-                    ParseResult::NoMatch => Some(ParseResult::NoMatch),
-                    ParseResult::Partial(state) => {
-                        first = false;
-                        Some(ParseResult::Partial(state))
+                Some(ParseResult::Match(output, input)) => {
+                    if first {
+                        return ParseResult::Match(output, input);
                     }
-                    ParseResult::Match(output, input) => {
-                        if first {
-                            return ParseResult::Match(output, input);
+                    Some(ParseResult::Match(output, input))
+                }
+                None => {
+                    let res = self.tuple[[i]].extract(input.clone(), None);
+                    match res {
+                        ParseResult::NoMatch => Some(ParseResult::NoMatch),
+                        ParseResult::Partial(state) => {
+                            first = false;
+                            Some(ParseResult::Partial(state))
                         }
-                        Some(ParseResult::Match(output, input))
-                    }
-                }
-            }
-            Some(ParseResult::Match(output, input)) => {
-                if first {
-                    return ParseResult::Match(output, input);
-                }
-                Some(ParseResult::Match(output, input))
-            }
-            None => {
-                let res = self.tuple.1.extract(input.clone(), None);
-                match res {
-                    ParseResult::NoMatch => Some(ParseResult::NoMatch),
-                    ParseResult::Partial(state) => {
-                        first = false;
-                        Some(ParseResult::Partial(state))
-                    }
-                    ParseResult::Match(output, input) => {
-                        if first {
-                            return ParseResult::Match(output, input);
+                        ParseResult::Match(output, input) => {
+                            if first {
+                                return ParseResult::Match(output, input);
+                            }
+                            Some(ParseResult::Match(output, input))
                         }
-                        Some(ParseResult::Match(output, input))
                     }
                 }
-            }
-        };
+            };
+        }
         if first {
             return ParseResult::NoMatch;
         } else {
@@ -176,79 +117,65 @@ where
     }
 }
 
-pub enum TupleState2<E0, E1>
+#[typle(Tuple for 2..=4)]
+pub enum TupleState<T>
 where
-    E0: Extract<Output = ByteStream>,
-    E1: Extract<Output = ByteStream>,
+    T: Tuple<impl Extract<Output = ByteStream>>,
 {
-    S0(Option<E0::State>),
-    S1(Option<E1::State>, [ByteStream; 1]),
-    Done([ByteStream; 2]),
+    S(Option<T::State>, [ByteStream; T::INDEX]) = typle_variants!(),
 }
 
-pub struct TupleSequence2<E0, E1> {
-    tuple: (E0, E1),
+pub struct TupleSequence<T> {
+    tuple: T,
 }
 
-impl<E0, E1> Repeatable for TupleSequence2<E0, E1>
-where
-    E0: Extract<Output = ByteStream>,
-    E1: Extract<Output = ByteStream>,
-{
-}
+#[typle(Tuple for 2..=4)]
+impl<T> Repeatable for TupleSequence<T> where T: Tuple<impl Extract<Output = ByteStream>> {}
 
-impl<E0, E1> Extract for TupleSequence2<E0, E1>
+#[typle(Tuple for 2..=4)]
+impl<T> Extract for TupleSequence<T>
 where
-    E0: Extract<Output = ByteStream>,
-    E1: Extract<Output = ByteStream>,
+    T: Tuple<impl Extract<Output = ByteStream>>,
 {
-    type State = TupleState2<E0, E1>;
-    type Output = [ByteStream; 2];
+    type State = TupleState<(T)>;
+    type Output = [ByteStream; T::LEN];
 
     fn extract(
         &self,
         mut input: ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, Self::Output> {
-        let mut state = state.unwrap_or(TupleState2::S0(None));
-        loop {
-            (state, input) = match state {
-                TupleState2::S0(inner_state) => match self.tuple.0.extract(input, inner_state) {
+        let mut state = state.unwrap_or(Self::State::S::<typle_index!(0)>(None, []));
+        for typle_const!(i) in 0..T::LEN {
+            if let Self::State::S::<typle_index!(i)>(inner_state, output) = state {
+                match self.tuple[[i]].extract(input, inner_state) {
                     ParseResult::NoMatch => {
                         return ParseResult::NoMatch;
                     }
                     ParseResult::Partial(inner_state) => {
-                        return ParseResult::Partial(TupleState2::S0(Some(inner_state)));
+                        return ParseResult::Partial(Self::State::S::<typle_index!(i)>(
+                            Some(inner_state),
+                            output,
+                        ));
                     }
-                    ParseResult::Match(output, input) => (TupleState2::S1(None, [output]), input),
-                },
-                TupleState2::S1(inner_state, old_output) => {
-                    match self.tuple.1.extract(input, inner_state) {
-                        ParseResult::NoMatch => {
-                            return ParseResult::NoMatch;
-                        }
-                        ParseResult::Partial(inner_state) => {
-                            return ParseResult::Partial(TupleState2::S1(
-                                Some(inner_state),
-                                old_output,
-                            ));
-                        }
-                        ParseResult::Match(output, input) => {
-                            let mut new_output = <[ByteStream; 2]>::default();
-                            old_output
-                                .into_iter()
-                                .chain(std::iter::once(output))
-                                .enumerate()
-                                .for_each(|(i, bs)| new_output[i] = bs);
-                            (TupleState2::Done(new_output), input)
+                    ParseResult::Match(matched, remain) => {
+                        let mut new_output = <[ByteStream; i + 1]>::default();
+                        output
+                            .into_iter()
+                            .chain(std::iter::once(matched))
+                            .enumerate()
+                            .for_each(|(j, bs)| new_output[j] = bs);
+                        input = remain;
+                        if typle_const!(i + 1 == T::LEN) {
+                            return ParseResult::Match(new_output, input);
+                        } else {
+                            state = Self::State::S::<typle_index!(i + 1)>(None, new_output);
                         }
                     }
-                }
-                TupleState2::Done(output) => {
-                    return ParseResult::Match(output, input);
                 }
             }
         }
+        unreachable!();
     }
 }
 
@@ -264,25 +191,25 @@ pub trait ExtractTuple {
     fn seq(self) -> Self::TupleSequence;
 }
 
-impl<E0, E1> ExtractTuple for (E0, E1)
+#[typle(Tuple for 2..=4)]
+impl<T> ExtractTuple for T
 where
-    E0: Extract,
-    E1: Extract,
+    T: Tuple<impl Extract>,
 {
-    type TupleAny = TupleAny2<E0, E1>;
-    type TupleFirst = TupleFirst2<E0, E1>;
-    type TupleSequence = TupleSequence2<E0, E1>;
+    type TupleAny = TupleAny<T>;
+    type TupleFirst = TupleFirst<T>;
+    type TupleSequence = TupleSequence<T>;
 
     fn any(self) -> Self::TupleAny {
-        TupleAny2 { tuple: self }
+        TupleAny { tuple: self }
     }
 
     fn first(self) -> Self::TupleFirst {
-        TupleFirst2 { tuple: self }
+        TupleFirst { tuple: self }
     }
 
     fn seq(self) -> Self::TupleSequence {
-        TupleSequence2 { tuple: self }
+        TupleSequence { tuple: self }
     }
 }
 
@@ -294,16 +221,20 @@ mod tests {
     #[test]
     fn test_sequence() {
         let input = ByteStream::from("hello3a");
-        let ParseResult::Match([out1, out2], input) =
-            ("hello", char::when(|c: char| c.is_digit(10)))
-                .seq()
-                .extract(input, None)
+        let ParseResult::Match([out1, out2, out3], input) = (
+            "hello",
+            char::when(|c: char| c.is_digit(10)),
+            char::when(char::is_alphabetic),
+        )
+            .seq()
+            .extract(input, None)
         else {
             panic!()
         };
         assert_eq!(out1.to_string(), "hello");
         assert_eq!(out2.to_string(), "3");
-        assert_eq!(input.to_string(), "a");
+        assert_eq!(out3.to_string(), "a");
+        assert!(input.is_empty());
 
         let mut buffer = ByteStream::from("hello3a");
         let input = buffer.take_before(3);
