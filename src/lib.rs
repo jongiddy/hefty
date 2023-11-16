@@ -3,6 +3,7 @@
 #![feature(str_internals)]
 
 use core::str::utf8_char_width;
+use std::ops::RangeBounds;
 
 use bytes::Buf;
 
@@ -53,6 +54,10 @@ pub trait Repeatable: Extract + Sized {
 
     fn times(self, n: usize) -> TimesParser<Self> {
         TimesParser::new(self, n)
+    }
+
+    fn repeated<R: RangeBounds<usize>>(self, r: R) -> RepeatedParser<Self> {
+        RepeatedParser::new(self, r)
     }
 }
 
@@ -143,6 +148,83 @@ where
                 ParseResult::Match(inner_output, inner_input) => {
                     output.push(inner_output);
                     inner_state = None;
+                    input = inner_input;
+                }
+            }
+        }
+        ParseResult::Match(output, input)
+    }
+}
+
+pub struct RepeatedParser<InnerParser> {
+    inner: InnerParser,
+    min: usize,
+    max: usize,
+}
+
+#[allow(dead_code)]
+impl<InnerParser> RepeatedParser<InnerParser> {
+    fn new<R: RangeBounds<usize>>(inner: InnerParser, range: R) -> Self {
+        let min = match range.start_bound() {
+            std::ops::Bound::Included(&n) => n,
+            std::ops::Bound::Excluded(&n) => n + 1,
+            std::ops::Bound::Unbounded => panic!(),
+        };
+        let max = match range.end_bound() {
+            std::ops::Bound::Included(&n) => n,
+            std::ops::Bound::Excluded(&n) => n - 1,
+            std::ops::Bound::Unbounded => panic!(),
+        };
+        Self { inner, min, max }
+    }
+}
+
+impl<InnerParser> Extract for RepeatedParser<InnerParser>
+where
+    InnerParser: Extract,
+{
+    type State = (
+        Option<InnerParser::State>,
+        ByteStream,
+        Vec<InnerParser::Output>,
+    );
+    type Output = Vec<InnerParser::Output>;
+
+    fn extract(
+        &self,
+        mut input: ByteStream,
+        state: Option<Self::State>,
+    ) -> ParseResult<Self::State, Self::Output> {
+        let (mut inner_state, mut saved, mut output) =
+            state.unwrap_or((None, ByteStream::default(), Vec::new()));
+        while output.len() < self.min {
+            match self.inner.extract(input, inner_state) {
+                ParseResult::NoMatch => {
+                    return ParseResult::NoMatch;
+                }
+                ParseResult::Partial(inner_state) => {
+                    return ParseResult::Partial((Some(inner_state), saved, output));
+                }
+                ParseResult::Match(inner_output, inner_input) => {
+                    output.push(inner_output);
+                    inner_state = None;
+                    input = inner_input;
+                }
+            }
+        }
+        while output.len() < self.max {
+            saved.append(&input);
+            match self.inner.extract(input, inner_state) {
+                ParseResult::NoMatch => {
+                    return ParseResult::Match(output, saved);
+                }
+                ParseResult::Partial(inner_state) => {
+                    return ParseResult::Partial((Some(inner_state), saved, output));
+                }
+                ParseResult::Match(inner_output, inner_input) => {
+                    output.push(inner_output);
+                    inner_state = None;
+                    saved = ByteStream::default();
                     input = inner_input;
                 }
             }
@@ -872,6 +954,45 @@ mod tests {
             assert_eq!(out.to_string(), "hello");
         }
         assert!(input.is_empty());
+    }
+
+    #[test]
+    fn test_repeated() {
+        let input = ByteStream::from("hellohellohello");
+        let ParseResult::Match(output, input) = "hello".repeated(1..3).extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.len(), 2);
+        for out in output {
+            assert_eq!(out.to_string(), "hello");
+        }
+        assert_eq!(input.to_string(), "hello");
+
+        let parser = "hello".repeated(1..10);
+        let input = ByteStream::from("hellohellohellohe");
+        let ParseResult::Partial(state) = parser.extract(input, None) else {
+            panic!()
+        };
+        let input = ByteStream::from("llohelp");
+        let ParseResult::Match(output, input) = parser.extract(input, Some(state)) else {
+            panic!()
+        };
+
+        assert_eq!(output.len(), 4);
+        for out in output {
+            assert_eq!(out.to_string(), "hello");
+        }
+        assert_eq!(input.to_string(), "help");
+
+        let input = ByteStream::from("helo");
+        let ParseResult::Match(output, input) = "hello".repeated(0..2).extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.len(), 0);
+        for out in output {
+            assert_eq!(out.to_string(), "hello");
+        }
+        assert_eq!(input.to_string(), "helo");
     }
 
     fn reverse(
