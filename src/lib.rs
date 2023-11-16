@@ -50,6 +50,10 @@ pub trait Repeatable: Extract + Sized {
     fn optional(self) -> OptionalParser<Self> {
         OptionalParser::new(self)
     }
+
+    fn times(self, n: usize) -> TimesParser<Self> {
+        TimesParser::new(self, n)
+    }
 }
 
 pub trait ParseAny {
@@ -92,7 +96,7 @@ where
         &self,
         input: ByteStream,
         state: Option<Self::State>,
-    ) -> ParseResult<Self::State, InnerParser::Output> {
+    ) -> ParseResult<Self::State, Self::Output> {
         let (inner_state, mut saved) = state.unwrap_or((None, ByteStream::default()));
         saved.append(&input);
         match self.inner.extract(input, inner_state) {
@@ -100,6 +104,50 @@ where
             ParseResult::Partial(inner_state) => ParseResult::Partial((Some(inner_state), saved)),
             ParseResult::Match(output, input) => ParseResult::Match(output, input),
         }
+    }
+}
+
+pub struct TimesParser<InnerParser> {
+    inner: InnerParser,
+    times: usize,
+}
+
+#[allow(dead_code)]
+impl<InnerParser> TimesParser<InnerParser> {
+    fn new(inner: InnerParser, n: usize) -> Self {
+        Self { inner, times: n }
+    }
+}
+
+impl<InnerParser> Extract for TimesParser<InnerParser>
+where
+    InnerParser: Extract,
+{
+    type State = (Option<InnerParser::State>, Vec<InnerParser::Output>);
+    type Output = Vec<InnerParser::Output>;
+
+    fn extract(
+        &self,
+        mut input: ByteStream,
+        state: Option<Self::State>,
+    ) -> ParseResult<Self::State, Self::Output> {
+        let (mut inner_state, mut output) = state.unwrap_or((None, Vec::new()));
+        while output.len() < self.times {
+            match self.inner.extract(input, inner_state) {
+                ParseResult::NoMatch => {
+                    return ParseResult::NoMatch;
+                }
+                ParseResult::Partial(inner_state) => {
+                    return ParseResult::Partial((Some(inner_state), output));
+                }
+                ParseResult::Match(inner_output, inner_input) => {
+                    output.push(inner_output);
+                    inner_state = None;
+                    input = inner_input;
+                }
+            }
+        }
+        ParseResult::Match(output, input)
     }
 }
 
@@ -811,6 +859,19 @@ mod tests {
         let ParseResult::Partial(_) = "world".optional().extract(input, None) else {
             panic!()
         };
+    }
+
+    #[test]
+    fn test_times() {
+        let input = ByteStream::from("hellohellohello");
+        let ParseResult::Match(output, input) = "hello".times(3).extract(input, None) else {
+            panic!()
+        };
+        assert_eq!(output.len(), 3);
+        for out in output {
+            assert_eq!(out.to_string(), "hello");
+        }
+        assert!(input.is_empty());
     }
 
     fn reverse(
