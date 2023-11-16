@@ -28,40 +28,13 @@ impl<State, Output> std::fmt::Debug for ParseResult<State, Output> {
     }
 }
 
-pub struct OptionalParser<InnerParser> {
-    inner: InnerParser,
-}
-
-#[allow(dead_code)]
-impl<InnerParser> OptionalParser<InnerParser> {
-    fn new(inner: InnerParser) -> Self {
-        Self { inner }
-    }
-}
-
-impl<InnerParser> Extract for OptionalParser<InnerParser>
-where
-    InnerParser: Extract,
-    InnerParser::Output: Default,
-{
-    type State = (Option<InnerParser::State>, ByteStream);
-    type Output = InnerParser::Output;
-
-    fn extract(
-        &self,
-        input: ByteStream,
-        state: Option<Self::State>,
-    ) -> ParseResult<Self::State, InnerParser::Output> {
-        let (inner_state, mut saved) = state.unwrap_or((None, ByteStream::default()));
-        saved.append(&input);
-        match self.inner.extract(input, inner_state) {
-            ParseResult::NoMatch => ParseResult::Match(Self::Output::default(), saved),
-            ParseResult::Partial(inner_state) => ParseResult::Partial((Some(inner_state), saved)),
-            ParseResult::Match(output, input) => ParseResult::Match(output, input),
-        }
-    }
-}
-
+/// A trait to extract a type from a `ByteStream`. The `extract` method is initially called with a
+/// state of `None`. If the type is extracted fully, the method returns `ParseResult::Match` with
+/// the extracted type and the remaining `ByteStream`. If the type cannot be extracted because it
+/// does not match, the `ParseResult::NoMatch` is returned. If the extraction reads to the end of
+/// the `ByteStream` but needs more data to extrac the type it returns `ParseResult::Partial` with a
+/// state. The next call to `extract` with a new `ByteStream` must pass in the returned state to
+/// continue parsing the type.
 pub trait Extract {
     type State;
     type Output = ByteStream;
@@ -94,6 +67,43 @@ where
     fn when(f: F) -> Self::Parser;
 }
 
+pub struct OptionalParser<InnerParser> {
+    inner: InnerParser,
+}
+
+#[allow(dead_code)]
+impl<InnerParser> OptionalParser<InnerParser> {
+    fn new(inner: InnerParser) -> Self {
+        Self { inner }
+    }
+}
+
+impl<InnerParser> Extract for OptionalParser<InnerParser>
+where
+    InnerParser: Extract,
+    InnerParser::Output: Default,
+{
+    // The state saves the state of the inner parser and the consumed ByteStream. The consumed
+    // ByteStream is kept so that it can be returned in a Match result for the None side of Option.
+    type State = (Option<InnerParser::State>, ByteStream);
+    type Output = InnerParser::Output;
+
+    fn extract(
+        &self,
+        input: ByteStream,
+        state: Option<Self::State>,
+    ) -> ParseResult<Self::State, InnerParser::Output> {
+        let (inner_state, mut saved) = state.unwrap_or((None, ByteStream::default()));
+        saved.append(&input);
+        match self.inner.extract(input, inner_state) {
+            ParseResult::NoMatch => ParseResult::Match(Self::Output::default(), saved),
+            ParseResult::Partial(inner_state) => ParseResult::Partial((Some(inner_state), saved)),
+            ParseResult::Match(output, input) => ParseResult::Match(output, input),
+        }
+    }
+}
+
+// b'a'
 impl Extract for u8 {
     type State = ();
 
@@ -115,8 +125,10 @@ impl Extract for u8 {
     }
 }
 
+// b'a'.optional()
 impl Repeatable for u8 {}
 
+// b"abc".extract()
 impl<const N: usize> Extract for [u8; N] {
     type State = (usize, ByteStream);
 
@@ -141,10 +153,15 @@ impl<const N: usize> Extract for [u8; N] {
     }
 }
 
+// b"abc".optional()
 impl<const N: usize> Repeatable for [u8; N] {}
 
 pub struct AnyByteParser;
 
+#[allow(non_camel_case_types)]
+pub struct byte {}
+
+// byte::any()
 impl Extract for AnyByteParser {
     type State = ();
 
@@ -161,9 +178,10 @@ impl Extract for AnyByteParser {
     }
 }
 
+// byte::any().optional()
 impl Repeatable for AnyByteParser {}
 
-impl ParseAny for u8 {
+impl ParseAny for byte {
     type Parser = AnyByteParser;
 
     fn any() -> Self::Parser {
@@ -173,6 +191,7 @@ impl ParseAny for u8 {
 
 pub struct ByteWhenParser<F>(F);
 
+// byte::when(|u8|...)
 impl<F> Extract for ByteWhenParser<F>
 where
     F: Fn(u8) -> bool,
@@ -193,9 +212,10 @@ where
     }
 }
 
+// byte::when(|u8|...).optional()
 impl<F> Repeatable for ByteWhenParser<F> where F: Fn(u8) -> bool {}
 
-impl<F> ParseWhen<u8, F> for u8
+impl<F> ParseWhen<u8, F> for byte
 where
     F: Fn(u8) -> bool,
 {
@@ -208,6 +228,7 @@ where
 
 pub struct ByteWhenRefParser<F>(F);
 
+// byte::when(|&u8|...)
 impl<F> Extract for ByteWhenRefParser<F>
 where
     F: Fn(&u8) -> bool,
@@ -228,9 +249,10 @@ where
     }
 }
 
+// byte::when(|&u8|...).optional()
 impl<F> Repeatable for ByteWhenRefParser<F> where F: Fn(&u8) -> bool {}
 
-impl<F> ParseWhen<&u8, F> for u8
+impl<F> ParseWhen<&u8, F> for byte
 where
     F: Fn(&u8) -> bool,
 {
@@ -241,6 +263,7 @@ where
     }
 }
 
+// 'a'
 impl Extract for char {
     type State = (u8, ByteStream);
 
@@ -267,6 +290,7 @@ impl Extract for char {
     }
 }
 
+// 'a'.optional()
 impl Repeatable for char {}
 
 impl Extract for &str {
@@ -298,6 +322,7 @@ impl Repeatable for &str {}
 
 pub struct AnyCharParser;
 
+// char::any()
 impl Extract for AnyCharParser {
     type State = (usize, ByteStream);
 
@@ -332,6 +357,7 @@ impl Extract for AnyCharParser {
     }
 }
 
+// char::any().optional()
 impl Repeatable for AnyCharParser {}
 
 impl ParseAny for char {
@@ -344,6 +370,7 @@ impl ParseAny for char {
 
 pub struct CharWhenParser<F>(F);
 
+// char::when(|c|...)
 impl<F> Extract for CharWhenParser<F>
 where
     F: Fn(char) -> bool,
@@ -394,6 +421,7 @@ where
     }
 }
 
+// char::when(|c|...).optional()
 impl<F> Repeatable for CharWhenParser<F> where F: Fn(char) -> bool {}
 
 impl<F> ParseWhen<char, F> for char
@@ -409,6 +437,7 @@ where
 
 pub struct CharWhenRefParser<F>(F);
 
+// char::when(|&c| ...)
 impl<F> Extract for CharWhenRefParser<F>
 where
     F: Fn(&char) -> bool,
@@ -459,6 +488,7 @@ where
     }
 }
 
+// char::when(|&c|...).optional()
 impl<F> Repeatable for CharWhenRefParser<F> where F: Fn(&char) -> bool {}
 
 impl<F> ParseWhen<&char, F> for char
@@ -504,7 +534,7 @@ mod tests {
 
     use bytes::Buf;
 
-    use crate::{ExtractFunction, ExtractTuple};
+    use crate::{byte, ExtractFunction, ExtractTuple};
 
     use super::{ByteStream, Extract, ParseAny, ParseResult, ParseWhen, Repeatable};
 
@@ -553,15 +583,15 @@ mod tests {
         let buffer = ByteStream::from("A4");
         let input = buffer.clone();
         assert_eq!(input.remaining(), 2);
-        let ParseResult::Match(output, input) = u8::any().extract(input, None) else {
+        let ParseResult::Match(output, input) = byte::any().extract(input, None) else {
             panic!()
         };
         assert_eq!(output.to_string(), "A");
-        let ParseResult::Match(output, input) = u8::any().extract(input, None) else {
+        let ParseResult::Match(output, input) = byte::any().extract(input, None) else {
             panic!()
         };
         assert_eq!(output.to_string(), "4");
-        let ParseResult::Partial(_) = u8::any().extract(input, None) else {
+        let ParseResult::Partial(_) = byte::any().extract(input, None) else {
             panic!()
         };
     }
@@ -572,23 +602,24 @@ mod tests {
         let input = buffer.clone();
         assert_eq!(input.remaining(), 2);
         let ParseResult::Match(output, input) =
-            u8::when(|b: u8| u8::is_ascii_alphabetic(&b)).extract(input, None)
+            byte::when(|b: u8| u8::is_ascii_alphabetic(&b)).extract(input, None)
         else {
             panic!()
         };
         assert_eq!(output.to_string(), "A");
         let ParseResult::NoMatch =
-            u8::when(|b: u8| u8::is_ascii_alphabetic(&b)).extract(input.clone(), None)
+            byte::when(|b: u8| u8::is_ascii_alphabetic(&b)).extract(input.clone(), None)
         else {
             panic!()
         };
         let ParseResult::Match(output, input) =
-            u8::when(|b: u8| u8::is_ascii_digit(&b)).extract(input, None)
+            byte::when(|b: u8| u8::is_ascii_digit(&b)).extract(input, None)
         else {
             panic!()
         };
         assert_eq!(output.to_string(), "4");
-        let ParseResult::Partial(_) = u8::when(|b: u8| u8::is_ascii_digit(&b)).extract(input, None)
+        let ParseResult::Partial(_) =
+            byte::when(|b: u8| u8::is_ascii_digit(&b)).extract(input, None)
         else {
             panic!()
         };
@@ -600,21 +631,21 @@ mod tests {
         let input = buffer.clone();
         assert_eq!(input.remaining(), 2);
         let ParseResult::Match(output, input) =
-            u8::when(u8::is_ascii_alphabetic).extract(input, None)
+            byte::when(u8::is_ascii_alphabetic).extract(input, None)
         else {
             panic!()
         };
         assert_eq!(output.to_string(), "A");
-        let ParseResult::NoMatch = u8::when(u8::is_ascii_alphabetic).extract(input.clone(), None)
+        let ParseResult::NoMatch = byte::when(u8::is_ascii_alphabetic).extract(input.clone(), None)
         else {
             panic!()
         };
-        let ParseResult::Match(output, input) = u8::when(u8::is_ascii_digit).extract(input, None)
+        let ParseResult::Match(output, input) = byte::when(u8::is_ascii_digit).extract(input, None)
         else {
             panic!()
         };
         assert_eq!(output.to_string(), "4");
-        let ParseResult::Partial(_) = u8::when(u8::is_ascii_digit).extract(input, None) else {
+        let ParseResult::Partial(_) = byte::when(u8::is_ascii_digit).extract(input, None) else {
             panic!()
         };
     }
