@@ -33,9 +33,12 @@ impl<State, Output> std::fmt::Debug for ParseResult<State, Output> {
 /// state of `None`. If the type is extracted fully, the method returns `ParseResult::Match` with
 /// the extracted type and the remaining `ByteStream`. If the type cannot be extracted because it
 /// does not match, the `ParseResult::NoMatch` is returned. If the extraction reads to the end of
-/// the `ByteStream` but needs more data to extrac the type it returns `ParseResult::Partial` with a
-/// state. The next call to `extract` with a new `ByteStream` must pass in the returned state to
-/// continue parsing the type.
+/// the `ByteStream` but needs more data to extract the type it returns `ParseResult::Partial` with
+/// a state. The next call to `extract` with a new `ByteStream` must pass in the returned state to
+/// continue parsing the type. If the end of the stream is reached while the state is `Partial` call
+/// `stop` with the state as some extractors can return `ParseResult::Match` in this case. e.g.
+/// `'a'.repeated(2..5)` will return Partial for "aaa" since it may be part of a longer pattern, but
+/// on end of stream, will return the 3 characters as a match.
 pub trait Extract {
     type State;
     type Output = ByteStream;
@@ -45,6 +48,10 @@ pub trait Extract {
         input: ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, Self::Output>;
+
+    fn stop(&self, state: Self::State) -> ParseResult<Self::State, Self::Output> {
+        ParseResult::Partial(state)
+    }
 }
 
 pub trait Repeatable: Extract + Sized {
@@ -94,7 +101,7 @@ where
 {
     // The state saves the state of the inner parser and the consumed ByteStream. The consumed
     // ByteStream is kept so that it can be returned in a Match result for the None side of Option.
-    type State = (Option<InnerParser::State>, ByteStream);
+    type State = (InnerParser::State, ByteStream);
     type Output = InnerParser::Output;
 
     fn extract(
@@ -102,11 +109,23 @@ where
         input: ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, Self::Output> {
-        let (inner_state, mut saved) = state.unwrap_or((None, ByteStream::default()));
+        let (inner_state, mut saved) = state
+            .map(|(s, saved)| (Some(s), saved))
+            .unwrap_or((None, ByteStream::default()));
         saved.append(&input);
         match self.inner.extract(input, inner_state) {
             ParseResult::NoMatch => ParseResult::Match(Self::Output::default(), saved),
-            ParseResult::Partial(inner_state) => ParseResult::Partial((Some(inner_state), saved)),
+            ParseResult::Partial(inner_state) => ParseResult::Partial((inner_state, saved)),
+            ParseResult::Match(output, input) => ParseResult::Match(output, input),
+        }
+    }
+
+    fn stop(&self, state: Self::State) -> ParseResult<Self::State, Self::Output> {
+        let (inner_state, saved) = state;
+        match self.inner.stop(inner_state) {
+            ParseResult::NoMatch | ParseResult::Partial(_) => {
+                ParseResult::Match(Self::Output::default(), saved)
+            }
             ParseResult::Match(output, input) => ParseResult::Match(output, input),
         }
     }
@@ -128,7 +147,7 @@ impl<InnerParser> Extract for TimesParser<InnerParser>
 where
     InnerParser: Extract,
 {
-    type State = (Option<InnerParser::State>, Vec<InnerParser::Output>);
+    type State = (InnerParser::State, Vec<InnerParser::Output>);
     type Output = Vec<InnerParser::Output>;
 
     fn extract(
@@ -136,14 +155,16 @@ where
         mut input: ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, Self::Output> {
-        let (mut inner_state, mut output) = state.unwrap_or((None, Vec::new()));
+        let (mut inner_state, mut output) = state
+            .map(|(s, o)| (Some(s), o))
+            .unwrap_or((None, Vec::new()));
         while output.len() < self.times {
             match self.inner.extract(input, inner_state) {
                 ParseResult::NoMatch => {
                     return ParseResult::NoMatch;
                 }
                 ParseResult::Partial(inner_state) => {
-                    return ParseResult::Partial((Some(inner_state), output));
+                    return ParseResult::Partial((inner_state, output));
                 }
                 ParseResult::Match(inner_output, inner_input) => {
                     output.push(inner_output);
@@ -153,6 +174,22 @@ where
             }
         }
         ParseResult::Match(output, input)
+    }
+
+    fn stop(&self, state: Self::State) -> ParseResult<Self::State, Self::Output> {
+        let (inner_state, mut output) = state;
+        match self.inner.stop(inner_state) {
+            ParseResult::NoMatch => ParseResult::NoMatch,
+            ParseResult::Partial(inner_state) => ParseResult::Partial((inner_state, output)),
+            ParseResult::Match(inner_output, input) => {
+                output.push(inner_output);
+                if output.len() < self.times {
+                    ParseResult::NoMatch
+                } else {
+                    ParseResult::Match(output, input)
+                }
+            }
+        }
     }
 }
 
@@ -183,11 +220,7 @@ impl<InnerParser> Extract for RepeatedParser<InnerParser>
 where
     InnerParser: Extract,
 {
-    type State = (
-        Option<InnerParser::State>,
-        ByteStream,
-        Vec<InnerParser::Output>,
-    );
+    type State = (InnerParser::State, ByteStream, Vec<InnerParser::Output>);
     type Output = Vec<InnerParser::Output>;
 
     fn extract(
@@ -195,15 +228,16 @@ where
         mut input: ByteStream,
         state: Option<Self::State>,
     ) -> ParseResult<Self::State, Self::Output> {
-        let (mut inner_state, mut saved, mut output) =
-            state.unwrap_or((None, ByteStream::default(), Vec::new()));
+        let (mut inner_state, mut saved, mut output) = state
+            .map(|(s, saved, output)| (Some(s), saved, output))
+            .unwrap_or((None, ByteStream::default(), Vec::new()));
         while output.len() < self.min {
             match self.inner.extract(input, inner_state) {
                 ParseResult::NoMatch => {
                     return ParseResult::NoMatch;
                 }
                 ParseResult::Partial(inner_state) => {
-                    return ParseResult::Partial((Some(inner_state), saved, output));
+                    return ParseResult::Partial((inner_state, saved, output));
                 }
                 ParseResult::Match(inner_output, inner_input) => {
                     output.push(inner_output);
@@ -219,7 +253,7 @@ where
                     return ParseResult::Match(output, saved);
                 }
                 ParseResult::Partial(inner_state) => {
-                    return ParseResult::Partial((Some(inner_state), saved, output));
+                    return ParseResult::Partial((inner_state, saved, output));
                 }
                 ParseResult::Match(inner_output, inner_input) => {
                     output.push(inner_output);
@@ -230,6 +264,20 @@ where
             }
         }
         ParseResult::Match(output, input)
+    }
+
+    fn stop(&self, state: Self::State) -> ParseResult<Self::State, Self::Output> {
+        let (inner_state, saved, mut output) = state;
+        if dbg!(output.len() < self.min) {
+            return ParseResult::Partial((inner_state, saved, output));
+        }
+        match self.inner.stop(inner_state) {
+            ParseResult::NoMatch | ParseResult::Partial(_) => ParseResult::Match(output, saved),
+            ParseResult::Match(inner_output, input) => {
+                output.push(inner_output);
+                ParseResult::Match(output, input)
+            }
+        }
     }
 }
 
@@ -977,12 +1025,24 @@ mod tests {
         let ParseResult::Match(output, input) = parser.extract(input, Some(state)) else {
             panic!()
         };
-
         assert_eq!(output.len(), 4);
         for out in output {
             assert_eq!(out.to_string(), "hello");
         }
         assert_eq!(input.to_string(), "help");
+
+        let input = ByteStream::from("hellohellohellohe");
+        let ParseResult::Partial(state) = parser.extract(input, None) else {
+            panic!()
+        };
+        let ParseResult::Match(output, input) = dbg!(parser.stop(state)) else {
+            panic!()
+        };
+        assert_eq!(output.len(), 3);
+        for out in output {
+            assert_eq!(out.to_string(), "hello");
+        }
+        assert_eq!(input.to_string(), "he");
 
         let input = ByteStream::from("helo");
         let ParseResult::Match(output, input) = "hello".repeated(0..2).extract(input, None) else {
