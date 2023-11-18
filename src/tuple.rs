@@ -8,6 +8,9 @@ pub struct TupleAny<T> {
 }
 
 #[typle(Tuple for 2..=12)]
+impl<T> Repeatable for TupleAny<T> where T: Tuple<impl Extract<Output = ByteStream>> {}
+
+#[typle(Tuple for 2..=12)]
 impl<T> Extract for TupleAny<T>
 where
     T: Tuple<impl Extract<Output = ByteStream>>,
@@ -53,6 +56,9 @@ where
 pub struct TupleFirst<T> {
     tuple: T,
 }
+
+#[typle(Tuple for 2..=12)]
+impl<T> Repeatable for TupleFirst<T> where T: Tuple<impl Extract<Output = ByteStream>> {}
 
 #[typle(Tuple for 2..=12)]
 impl<T> Extract for TupleFirst<T>

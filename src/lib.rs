@@ -3,6 +3,7 @@
 #![feature(str_internals)]
 
 use core::str::utf8_char_width;
+use std::marker::PhantomData;
 use std::ops::RangeBounds;
 
 use bytes::Buf;
@@ -63,54 +64,6 @@ pub trait Repeatable: Extract + Sized {
     fn repeated<R: RangeBounds<usize>>(self, r: R) -> RepeatedParser<Self> {
         RepeatedParser::new(self, r)
     }
-}
-
-// A trait to merge a sequence of ByteStreams into a single ByteStream
-pub trait Mergeable: Extract + Sized {
-    fn merge(self) -> MergeParser<Self> {
-        MergeParser::new(self)
-    }
-}
-
-pub struct MergeParser<InnerParser> {
-    inner: InnerParser,
-}
-
-#[allow(dead_code)]
-impl<InnerParser> MergeParser<InnerParser> {
-    fn new(inner: InnerParser) -> Self {
-        Self { inner }
-    }
-}
-
-impl<InnerParser> Extract for MergeParser<InnerParser>
-where
-    InnerParser: Extract,
-    InnerParser::Output: IntoIterator<Item = ByteStream>,
-{
-    type State = InnerParser::State;
-
-    fn extract(
-        &self,
-        input: ByteStream,
-        state: Option<Self::State>,
-        last: bool,
-    ) -> ParseResult<Self::State, Self::Output> {
-        match self.inner.extract(input, state, last) {
-            ParseResult::NoMatch => ParseResult::NoMatch,
-            ParseResult::Partial(state) => ParseResult::Partial(state),
-            ParseResult::Match(output, input) => {
-                ParseResult::Match(output.into_iter().collect(), input)
-            }
-        }
-    }
-}
-
-impl<Parser> Mergeable for Parser
-where
-    Parser: Extract,
-    Parser::Output: IntoIterator<Item = ByteStream>,
-{
 }
 
 pub trait ParseAny {
@@ -296,6 +249,60 @@ where
         }
         ParseResult::Match(output, input)
     }
+}
+
+// A trait to merge a sequence of ByteStreams into a single ByteStream
+pub trait Collectable: Extract + Sized {
+    fn collect<Target>(self) -> CollectParser<Target, Self> {
+        CollectParser::new(self)
+    }
+}
+
+pub struct CollectParser<Target, InnerParser> {
+    inner: InnerParser,
+    target: PhantomData<Target>,
+}
+
+#[allow(dead_code)]
+impl<Target, InnerParser> CollectParser<Target, InnerParser> {
+    fn new(inner: InnerParser) -> Self {
+        Self {
+            inner,
+            target: PhantomData,
+        }
+    }
+}
+
+impl<Target, InnerParser> Extract for CollectParser<Target, InnerParser>
+where
+    InnerParser: Extract,
+    InnerParser::Output: IntoIterator,
+    Target: FromIterator<<<InnerParser as Extract>::Output as std::iter::IntoIterator>::Item>,
+{
+    type State = InnerParser::State;
+    type Output = Target;
+
+    fn extract(
+        &self,
+        input: ByteStream,
+        state: Option<Self::State>,
+        last: bool,
+    ) -> ParseResult<Self::State, Self::Output> {
+        match self.inner.extract(input, state, last) {
+            ParseResult::NoMatch => ParseResult::NoMatch,
+            ParseResult::Partial(state) => ParseResult::Partial(state),
+            ParseResult::Match(output, input) => {
+                ParseResult::Match(output.into_iter().collect(), input)
+            }
+        }
+    }
+}
+
+impl<Parser> Collectable for Parser
+where
+    Parser: Extract,
+    Parser::Output: IntoIterator<Item = ByteStream>,
+{
 }
 
 // b'a'
@@ -772,7 +779,7 @@ mod tests {
 
     use crate::{byte, ExtractFunction, ExtractTuple};
 
-    use super::{ByteStream, Extract, Mergeable, ParseAny, ParseResult, ParseWhen, Repeatable};
+    use super::{ByteStream, Collectable, Extract, ParseAny, ParseResult, ParseWhen, Repeatable};
 
     #[test]
     fn test_byte_literal() {
@@ -1110,7 +1117,7 @@ mod tests {
             panic!()
         };
         let ParseResult::Match(output, input) =
-            dbg!(parser.extract(ByteStream::default(), Some(state), true))
+            parser.extract(ByteStream::default(), Some(state), true)
         else {
             panic!()
         };
@@ -1309,31 +1316,67 @@ mod tests {
         fn is_digit(c: char) -> bool {
             c.is_ascii_digit()
         }
-        let parser = (
+        let json_number_parser = (
             '-'.optional(),
             (
                 '0',
                 (
                     ('1', '2', '3', '4', '5', '6', '7', '8', '9').any(),
-                    char::when(is_digit).repeated(..).merge(),
+                    char::when(is_digit).repeated(..).collect(),
                 )
                     .seq()
-                    .merge(),
+                    .collect(),
             )
-                .first(),
+                .any(),
+            ('.', char::when(is_digit).repeated(..).collect())
+                .seq()
+                .optional()
+                .collect(),
+            (
+                ('e', 'E').any(),
+                ('-', '+').any().optional(),
+                char::when(is_digit).repeated(..).collect(),
+            )
+                .seq()
+                .optional()
+                .collect(),
         )
             .seq()
-            .merge();
+            .collect::<ByteStream>();
+
         let input = ByteStream::from("-123");
-        let ParseResult::Partial(state) = parser.extract(input, None, false) else {
+        let ParseResult::Partial(state) = json_number_parser.extract(input, None, false) else {
             panic!();
         };
         let ParseResult::Match(output, input) =
-            dbg!(parser.extract(ByteStream::default(), Some(state), true))
+            json_number_parser.extract(ByteStream::default(), Some(state), true)
         else {
             panic!();
         };
         assert_eq!(output.to_string(), "-123");
         assert!(input.is_empty());
+
+        let ParseResult::Match(output, input) =
+            json_number_parser.extract(ByteStream::from("3.14159,"), None, true)
+        else {
+            panic!();
+        };
+        assert_eq!(output.to_string(), "3.14159");
+        assert_eq!(input.to_string(), ",");
+
+        let ParseResult::Match(output, input) =
+            json_number_parser.extract(ByteStream::from("4.2e+06"), None, true)
+        else {
+            panic!();
+        };
+        assert_eq!(output.to_string(), "4.2e+06");
+        assert!(input.is_empty());
+
+        let ParseResult::Match(output, input) = json_number_parser.extract(ByteStream::from("09.2"), None, true)
+        else {
+            panic!();
+        };
+        assert_eq!(output.to_string(), "0");
+        assert_eq!(input.to_string(), "9.2");
     }
 }
