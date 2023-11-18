@@ -1380,4 +1380,77 @@ mod tests {
         assert_eq!(output.to_string(), "0");
         assert_eq!(input.to_string(), "9.2");
     }
+
+    #[test]
+    fn json_string() {
+        let json_string_parser = (
+            '"',
+            (
+                (
+                    '\\',
+                    (
+                        '"',
+                        '\\',
+                        '/',
+                        'b',
+                        'f',
+                        'n',
+                        'r',
+                        't',
+                        ('u', char::when(char::is_ascii_hexdigit).times(4).collect())
+                            .seq()
+                            .collect(),
+                    )
+                        .any(),
+                )
+                    .seq()
+                    .collect(),
+                char::when(|c| c != '"' && c != '\\'),
+            )
+                .any()
+                .repeated(..)
+                .collect(),
+            '"',
+        )
+            .seq()
+            .collect::<ByteStream>();
+
+        let ParseResult::Match(output, input) =
+            json_string_parser.extract(ByteStream::from(r#""hello, world!","#), None, true)
+        else {
+            panic!();
+        };
+        assert_eq!(output.to_string(), r#""hello, world!""#);
+        assert_eq!(input.to_string(), ",");
+
+        let ParseResult::Match(output, input) =
+            json_string_parser.extract(ByteStream::from(r#""""#), None, true)
+        else {
+            panic!();
+        };
+        assert_eq!(output.to_string(), r#""""#);
+        assert!(input.is_empty());
+
+        let ParseResult::Match(output, input) =
+            json_string_parser.extract(ByteStream::from(r#""hello, \"!","#), None, true)
+        else {
+            panic!();
+        };
+        assert_eq!(output.to_string(), r#""hello, \"!""#);
+        assert_eq!(input.to_string(), ",");
+
+        let ParseResult::NoMatch =
+            json_string_parser.extract(ByteStream::from(r#""hello, \ufour!","#), None, true)
+        else {
+            panic!();
+        };
+
+        let ParseResult::Match(output, input) =
+            json_string_parser.extract(ByteStream::from(r#""hello, \uAbCd\t""#), None, true)
+        else {
+            panic!();
+        };
+        assert_eq!(output.to_string(), r#""hello, \uAbCd\t""#);
+        assert!(input.is_empty());
+    }
 }
