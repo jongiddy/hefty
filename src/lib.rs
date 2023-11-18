@@ -52,6 +52,23 @@ pub trait Extract {
     ) -> ParseResult<Self::State, Self::Output>;
 }
 
+impl<T> Extract for &T
+where
+    T: Extract,
+{
+    type State = T::State;
+
+    type Output = T::Output;
+
+    fn extract(
+        &self,
+        input: ByteStream,
+        state: Option<Self::State>,
+        last: bool,
+    ) -> ParseResult<Self::State, Self::Output> {
+        (*self).extract(input, state, last)
+    }
+}
 pub trait Repeatable: Extract + Sized {
     fn optional(self) -> OptionalParser<Self> {
         OptionalParser::new(self)
@@ -271,6 +288,11 @@ impl<Target, InnerParser> CollectParser<Target, InnerParser> {
             target: PhantomData,
         }
     }
+}
+
+impl<Target, InnerParser> Repeatable for CollectParser<Target, InnerParser> where
+    CollectParser<Target, InnerParser>: Extract
+{
 }
 
 impl<Target, InnerParser> Extract for CollectParser<Target, InnerParser>
@@ -594,6 +616,7 @@ impl ParseAny for char {
     }
 }
 
+#[derive(Clone)]
 pub struct CharWhenParser<F>(F);
 
 // char::when(|c|...)
@@ -744,32 +767,6 @@ where
     }
 }
 
-trait ExtractFunction:
-    Fn(ByteStream, Option<ByteStream>, bool) -> ParseResult<ByteStream, ByteStream>
-{
-}
-
-impl<T> ExtractFunction for T where
-    T: Fn(ByteStream, Option<ByteStream>, bool) -> ParseResult<ByteStream, ByteStream>
-{
-}
-
-impl<F> Extract for F
-where
-    F: ExtractFunction,
-{
-    type State = ByteStream;
-
-    fn extract(
-        &self,
-        input: ByteStream,
-        state: Option<Self::State>,
-        last: bool,
-    ) -> ParseResult<Self::State, ByteStream> {
-        (self)(input, state, last)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::assert_matches::assert_matches;
@@ -777,7 +774,7 @@ mod tests {
 
     use bytes::Buf;
 
-    use crate::{byte, ExtractFunction, ExtractTuple};
+    use crate::{byte, ExtractTuple};
 
     use super::{ByteStream, Collectable, Extract, ParseAny, ParseResult, ParseWhen, Repeatable};
 
@@ -1139,40 +1136,42 @@ mod tests {
         assert_eq!(input.to_string(), "helo");
     }
 
-    fn reverse(
-        input: ByteStream,
-        _state: Option<ByteStream>,
-        _last: bool,
-    ) -> ParseResult<ByteStream, ByteStream> {
-        let mut d = VecDeque::new();
-        for b in input.iter().cloned() {
-            d.push_front(b);
-        }
-        let v = d.into_iter().collect::<Vec<_>>();
-        let output = ByteStream::from(bytes::Bytes::from(v));
-        ParseResult::Match(output, ByteStream::default())
+    struct Reverse {
+        n: usize,
     }
 
-    fn make_reverse(i: usize) -> impl ExtractFunction {
-        move |mut bs, state, last| {
-            let bs1 = bs.take_before(i);
-            reverse(bs1, state, last)
+    impl Extract for Reverse {
+        type State = ();
+        type Output = ByteStream;
+
+        fn extract(
+            &self,
+            mut input: ByteStream,
+            _state: Option<Self::State>,
+            _last: bool,
+        ) -> ParseResult<Self::State, Self::Output> {
+            let mut d = VecDeque::new();
+            for b in input.take_before(self.n).iter().cloned() {
+                d.push_front(b);
+            }
+            let v = d.into_iter().collect::<Vec<_>>();
+            let output = ByteStream::from(bytes::Bytes::from(v));
+            ParseResult::Match(output, input)
         }
+    }
+
+    fn reverse(n: usize) -> Reverse {
+        Reverse { n }
     }
 
     #[test]
     fn test_function() {
         let input = ByteStream::from("helloworld");
-        let ParseResult::Match(output, _) = reverse.extract(input, None, false) else {
-            panic!()
-        };
-        assert_eq!(output.to_string(), "dlrowolleh");
-
-        let input = ByteStream::from("helloworld");
-        let ParseResult::Match(output, _) = make_reverse(6).extract(input, None, false) else {
+        let ParseResult::Match(output, input) = reverse(6).extract(input, None, false) else {
             panic!()
         };
         assert_eq!(output.to_string(), "wolleh");
+        assert_eq!(input.to_string(), "orld");
     }
 
     #[test]
@@ -1452,5 +1451,48 @@ mod tests {
         };
         assert_eq!(output.to_string(), r#""hello, \uAbCd\t""#);
         assert!(input.is_empty());
+    }
+
+    #[test]
+    fn url_authority() {
+        // Build a parser for `authority` from https://www.rfc-editor.org/rfc/rfc3986.html#appendix-A
+        // Share sub-parsers using borrowed references.
+        let unreserved = char::when(|c| {
+            char::is_ascii_alphanumeric(&c) || c == '-' || c == '.' || c == '_' || c == '~'
+        });
+        let pct_encoded = ('%', char::when(char::is_ascii_hexdigit).times(2).collect())
+            .seq()
+            .collect();
+        let sub_delims = ('!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=').any();
+
+        let userinfo = (
+            (&unreserved, &pct_encoded, &sub_delims, ':')
+                .any()
+                .repeated(..)
+                .collect(),
+            '@',
+        )
+            .seq()
+            .collect::<ByteStream>();
+        let reg_name = (&unreserved, &pct_encoded, &sub_delims)
+            .any()
+            .repeated(..)
+            .collect();
+        // host format is first match of IPv4, IPv6, or reg-name
+        let host = (reg_name,).first();
+        let port = (':', char::when(char::is_ascii_digit).repeated(..).collect())
+            .seq()
+            .collect();
+        let authority = (userinfo.optional(), host, port.optional())
+            .seq()
+            .collect::<ByteStream>();
+
+        let ParseResult::Match(output, input) =
+            authority.extract(ByteStream::from("example.com:3245/path"), None, true)
+        else {
+            panic!();
+        };
+        assert_eq!(output.to_string(), "example.com:3245");
+        assert_eq!(input.to_string(), "/path");
     }
 }
