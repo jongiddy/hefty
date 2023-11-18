@@ -19,19 +19,22 @@ where
         &self,
         input: ByteStream,
         state: Option<Self::State>,
+        last: bool,
     ) -> ParseResult<Self::State, Self::Output> {
         let mut exhausted = true;
         let mut state = state.unwrap_or(typle_expand!(Some(None)));
         for typle_const!(i) in 0..T::LEN {
             if let Some(inner_state) = &mut state[[i]] {
                 let input = input.clone();
-                match self.tuple[[i]].extract(input, inner_state.take()) {
+                match self.tuple[[i]].extract(input, inner_state.take(), last) {
                     ParseResult::NoMatch => {
                         state[[i]] = None;
                     }
                     ParseResult::Partial(new_state) => {
                         *inner_state = Some(new_state);
-                        exhausted = false;
+                        if !last {
+                            exhausted = false;
+                        }
                     }
                     ParseResult::Match(output, input) => {
                         return ParseResult::Match(output, input);
@@ -63,6 +66,7 @@ where
         &self,
         input: ByteStream,
         state: Option<Self::State>,
+        last: bool,
     ) -> ParseResult<Self::State, Self::Output> {
         let mut first = true;
         let mut state = state.unwrap_or(typle_expand!(None));
@@ -70,11 +74,13 @@ where
             state[[i]] = match state[[i]].take() {
                 Some(ParseResult::NoMatch) => Some(ParseResult::NoMatch),
                 Some(ParseResult::Partial(inner_state)) => {
-                    let res = self.tuple[[i]].extract(input.clone(), Some(inner_state));
+                    let res = self.tuple[[i]].extract(input.clone(), Some(inner_state), last);
                     match res {
                         ParseResult::NoMatch => Some(ParseResult::NoMatch),
                         ParseResult::Partial(state) => {
-                            first = false;
+                            if !last {
+                                first = false;
+                            }
                             Some(ParseResult::Partial(state))
                         }
                         ParseResult::Match(output, input) => {
@@ -92,11 +98,13 @@ where
                     Some(ParseResult::Match(output, input))
                 }
                 None => {
-                    let res = self.tuple[[i]].extract(input.clone(), None);
+                    let res = self.tuple[[i]].extract(input.clone(), None, last);
                     match res {
                         ParseResult::NoMatch => Some(ParseResult::NoMatch),
                         ParseResult::Partial(state) => {
-                            first = false;
+                            if !last {
+                                first = false;
+                            }
                             Some(ParseResult::Partial(state))
                         }
                         ParseResult::Match(output, input) => {
@@ -144,19 +152,24 @@ where
         &self,
         mut input: ByteStream,
         state: Option<Self::State>,
+        last: bool,
     ) -> ParseResult<Self::State, Self::Output> {
         let mut state = state.unwrap_or(Self::State::S::<typle_index!(0)>(None, []));
         for typle_const!(i) in 0..T::LEN {
             if let Self::State::S::<typle_index!(i)>(inner_state, output) = state {
-                match self.tuple[[i]].extract(input, inner_state) {
+                match self.tuple[[i]].extract(input, inner_state, last) {
                     ParseResult::NoMatch => {
                         return ParseResult::NoMatch;
                     }
                     ParseResult::Partial(inner_state) => {
-                        return ParseResult::Partial(Self::State::S::<typle_index!(i)>(
-                            Some(inner_state),
-                            output,
-                        ));
+                        if last {
+                            return ParseResult::NoMatch;
+                        } else {
+                            return ParseResult::Partial(Self::State::S::<typle_index!(i)>(
+                                Some(inner_state),
+                                output,
+                            ));
+                        }
                     }
                     ParseResult::Match(matched, remain) => {
                         let mut new_output = <[ByteStream; i + 1]>::default();
@@ -227,7 +240,7 @@ mod tests {
             char::when(char::is_alphabetic),
         )
             .seq()
-            .extract(input, None)
+            .extract(input, None, true)
         else {
             panic!()
         };
@@ -240,13 +253,14 @@ mod tests {
         let input = buffer.take_before(3);
         let ParseResult::Partial(state) = ("hello", char::when(char::is_alphabetic))
             .seq()
-            .extract(input, None)
+            .extract(input, None, false)
         else {
             panic!()
         };
-        let ParseResult::NoMatch = ("hello", char::when(char::is_alphabetic))
-            .seq()
-            .extract(buffer, Some(state))
+        let ParseResult::NoMatch =
+            ("hello", char::when(char::is_alphabetic))
+                .seq()
+                .extract(buffer, Some(state), false)
         else {
             panic!()
         };
@@ -259,7 +273,7 @@ mod tests {
             ("hello", char::when(|c: char| c.is_digit(10)))
                 .seq()
                 .optional()
-                .extract(input, None)
+                .extract(input, None, true)
         else {
             panic!()
         };
@@ -267,8 +281,10 @@ mod tests {
         assert!(out2.is_empty());
         assert_eq!(input.to_string(), "hello, world!");
 
-        let ParseResult::Match([out1, out2], input) =
-            ("hello, ", "world!").seq().optional().extract(input, None)
+        let ParseResult::Match([out1, out2], input) = ("hello, ", "world!")
+            .seq()
+            .optional()
+            .extract(input, None, true)
         else {
             panic!()
         };
@@ -282,14 +298,14 @@ mod tests {
         let input = ByteStream::from("hello3a");
         let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_digit(10)))
             .any()
-            .extract(input, None)
+            .extract(input, None, false)
         else {
             panic!()
         };
         assert_eq!(output.to_string(), "hello");
         let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_digit(10)))
             .any()
-            .extract(input, None)
+            .extract(input, None, true)
         else {
             panic!()
         };
@@ -302,14 +318,14 @@ mod tests {
         let input = ByteStream::from("hello3a");
         let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_digit(10)))
             .first()
-            .extract(input, None)
+            .extract(input, None, false)
         else {
             panic!()
         };
         assert_eq!(output.to_string(), "hello");
         let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_digit(10)))
             .first()
-            .extract(input, None)
+            .extract(input, None, true)
         else {
             panic!()
         };
@@ -325,7 +341,7 @@ mod tests {
         let input = buffer.take_before(3);
         let ParseResult::Match(output, input) = ("hello", char::when(char::is_alphabetic))
             .any()
-            .extract(input, None)
+            .extract(input, None, false)
         else {
             panic!()
         };
@@ -341,13 +357,13 @@ mod tests {
         let input = buffer.take_before(3);
         let ParseResult::Partial(state) = ("hello", char::when(char::is_alphabetic))
             .first()
-            .extract(input, None)
+            .extract(input, None, false)
         else {
             panic!()
         };
         let ParseResult::Match(output, input) = ("hello", char::when(char::is_alphabetic))
             .first()
-            .extract(buffer, Some(state))
+            .extract(buffer, Some(state), false)
         else {
             panic!()
         };
