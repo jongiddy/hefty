@@ -7,7 +7,7 @@ pub struct TupleAny<T> {
     tuple: T,
 }
 
-#[typle(Tuple for 2..=4)]
+#[typle(Tuple for 2..=12)]
 impl<T> Extract for TupleAny<T>
 where
     T: Tuple<impl Extract<Output = ByteStream>>,
@@ -54,7 +54,7 @@ pub struct TupleFirst<T> {
     tuple: T,
 }
 
-#[typle(Tuple for 2..=4)]
+#[typle(Tuple for 2..=12)]
 impl<T> Extract for TupleFirst<T>
 where
     T: Tuple<impl Extract<Output = ByteStream>>,
@@ -125,7 +125,7 @@ where
     }
 }
 
-#[typle(Tuple for 2..=4)]
+#[typle(Tuple for 2..=12)]
 pub enum TupleState<T>
 where
     T: Tuple<impl Extract<Output = ByteStream>>,
@@ -137,10 +137,10 @@ pub struct TupleSequence<T> {
     tuple: T,
 }
 
-#[typle(Tuple for 2..=4)]
+#[typle(Tuple for 2..=12)]
 impl<T> Repeatable for TupleSequence<T> where T: Tuple<impl Extract<Output = ByteStream>> {}
 
-#[typle(Tuple for 2..=4)]
+#[typle(Tuple for 2..=12)]
 impl<T> Extract for TupleSequence<T>
 where
     T: Tuple<impl Extract<Output = ByteStream>>,
@@ -204,7 +204,7 @@ pub trait ExtractTuple {
     fn seq(self) -> Self::TupleSequence;
 }
 
-#[typle(Tuple for 2..=4)]
+#[typle(Tuple for 2..=12)]
 impl<T> ExtractTuple for T
 where
     T: Tuple<impl Extract>,

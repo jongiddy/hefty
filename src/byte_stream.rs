@@ -206,6 +206,16 @@ impl From<&'static str> for ByteStream {
     }
 }
 
+impl FromIterator<ByteStream> for ByteStream {
+    fn from_iter<T: IntoIterator<Item = ByteStream>>(iter: T) -> Self {
+        let mut result = ByteStream::default();
+        for bs in iter {
+            result.extend(bs);
+        }
+        result
+    }
+}
+
 impl Buf for ByteStream {
     fn remaining(&self) -> usize {
         match &self.chunks {

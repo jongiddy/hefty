@@ -65,6 +65,54 @@ pub trait Repeatable: Extract + Sized {
     }
 }
 
+// A trait to merge a sequence of ByteStreams into a single ByteStream
+pub trait Mergeable: Extract + Sized {
+    fn merge(self) -> MergeParser<Self> {
+        MergeParser::new(self)
+    }
+}
+
+pub struct MergeParser<InnerParser> {
+    inner: InnerParser,
+}
+
+#[allow(dead_code)]
+impl<InnerParser> MergeParser<InnerParser> {
+    fn new(inner: InnerParser) -> Self {
+        Self { inner }
+    }
+}
+
+impl<InnerParser> Extract for MergeParser<InnerParser>
+where
+    InnerParser: Extract,
+    InnerParser::Output: IntoIterator<Item = ByteStream>,
+{
+    type State = InnerParser::State;
+
+    fn extract(
+        &self,
+        input: ByteStream,
+        state: Option<Self::State>,
+        last: bool,
+    ) -> ParseResult<Self::State, Self::Output> {
+        match self.inner.extract(input, state, last) {
+            ParseResult::NoMatch => ParseResult::NoMatch,
+            ParseResult::Partial(state) => ParseResult::Partial(state),
+            ParseResult::Match(output, input) => {
+                ParseResult::Match(output.into_iter().collect(), input)
+            }
+        }
+    }
+}
+
+impl<Parser> Mergeable for Parser
+where
+    Parser: Extract,
+    Parser::Output: IntoIterator<Item = ByteStream>,
+{
+}
+
 pub trait ParseAny {
     type Parser: Extract;
 
@@ -176,18 +224,17 @@ pub struct RepeatedParser<InnerParser> {
     max: usize,
 }
 
-#[allow(dead_code)]
 impl<InnerParser> RepeatedParser<InnerParser> {
     fn new<R: RangeBounds<usize>>(inner: InnerParser, range: R) -> Self {
         let min = match range.start_bound() {
             std::ops::Bound::Included(&n) => n,
             std::ops::Bound::Excluded(&n) => n + 1,
-            std::ops::Bound::Unbounded => panic!(),
+            std::ops::Bound::Unbounded => usize::MIN,
         };
         let max = match range.end_bound() {
             std::ops::Bound::Included(&n) => n,
             std::ops::Bound::Excluded(&n) => n - 1,
-            std::ops::Bound::Unbounded => panic!(),
+            std::ops::Bound::Unbounded => usize::MAX,
         };
         Self { inner, min, max }
     }
@@ -725,7 +772,7 @@ mod tests {
 
     use crate::{byte, ExtractFunction, ExtractTuple};
 
-    use super::{ByteStream, Extract, ParseAny, ParseResult, ParseWhen, Repeatable};
+    use super::{ByteStream, Extract, Mergeable, ParseAny, ParseResult, ParseWhen, Repeatable};
 
     #[test]
     fn test_byte_literal() {
@@ -1255,5 +1302,38 @@ mod tests {
         };
         assert_eq!(output.to_string(), "hello");
         assert_eq!(input.to_string(), "3a");
+    }
+
+    #[test]
+    fn json_number() {
+        fn is_digit(c: char) -> bool {
+            c.is_ascii_digit()
+        }
+        let parser = (
+            '-'.optional(),
+            (
+                '0',
+                (
+                    ('1', '2', '3', '4', '5', '6', '7', '8', '9').any(),
+                    char::when(is_digit).repeated(..).merge(),
+                )
+                    .seq()
+                    .merge(),
+            )
+                .first(),
+        )
+            .seq()
+            .merge();
+        let input = ByteStream::from("-123");
+        let ParseResult::Partial(state) = parser.extract(input, None, false) else {
+            panic!();
+        };
+        let ParseResult::Match(output, input) =
+            dbg!(parser.extract(ByteStream::default(), Some(state), true))
+        else {
+            panic!();
+        };
+        assert_eq!(output.to_string(), "-123");
+        assert!(input.is_empty());
     }
 }
