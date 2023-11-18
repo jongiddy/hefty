@@ -1372,7 +1372,8 @@ mod tests {
         assert_eq!(output.to_string(), "4.2e+06");
         assert!(input.is_empty());
 
-        let ParseResult::Match(output, input) = json_number_parser.extract(ByteStream::from("09.2"), None, true)
+        let ParseResult::Match(output, input) =
+            json_number_parser.extract(ByteStream::from("09.2"), None, true)
         else {
             panic!();
         };
