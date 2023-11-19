@@ -731,7 +731,7 @@ fn url_authority_unpack() {
         .collect();
     let sub_delims = ('!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=').any();
 
-    // Using `first` ensures that we match the longest sequence of digits`
+    // Using `first` ensures that we match the longest sequence of digits
     let dec_octet = (
         ("25", ("0", "1", "2", "3", "4", "5").any())
             .seq()

@@ -2,6 +2,10 @@
 name = "hefty"
 version = "0.1.0"
 edition = "2021"
+description = "Parser for streaming data"
+license = "MIT"
+keywords = ["parser"]
+repository = "https://github.com/jongiddy/hefty"
 
 [dependencies]
 bytes = "1.5"
