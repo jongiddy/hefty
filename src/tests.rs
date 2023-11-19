@@ -731,6 +731,40 @@ fn url_authority_unpack() {
         .collect();
     let sub_delims = ('!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=').any();
 
+    // Using `first` ensures that we match the longest sequence of digits`
+    let dec_octet = (
+        ("25", ("0", "1", "2", "3", "4", "5").any())
+            .seq()
+            .collect::<ByteStream>(),
+        (
+            '2',
+            ("0", "1", "2", "3", "4").any(),
+            char::when(char::is_ascii_digit),
+        )
+            .seq()
+            .collect::<ByteStream>(),
+        ('1', char::when(char::is_ascii_digit).times(2).collect())
+            .seq()
+            .collect::<ByteStream>(),
+        (
+            ("1", "2", "3", "4", "5", "6", "7", "8", "9").any(),
+            char::when(char::is_ascii_digit),
+        )
+            .seq()
+            .collect(),
+        char::when(char::is_ascii_digit),
+    )
+        .first();
+    let ipv4address = (
+        &dec_octet, '.', &dec_octet, '.', &dec_octet, '.', &dec_octet,
+    )
+        .seq()
+        .collect();
+    let reg_name = (&unreserved, &pct_encoded, &sub_delims)
+        .any()
+        .repeated(..)
+        .collect();
+
     let userinfo = (
         (&unreserved, &pct_encoded, &sub_delims, ':')
             .any()
@@ -740,12 +774,8 @@ fn url_authority_unpack() {
     )
         .seq()
         .map(|[userinfo, _at]| userinfo);
-    let reg_name = (&unreserved, &pct_encoded, &sub_delims)
-        .any()
-        .repeated(..)
-        .collect();
-    // host format is first match of IPv4, IPv6, or reg-name
-    let host = (reg_name,).first();
+    // "In order to disambiguate the syntax, we apply the "first-match-wins" algorithm"
+    let host = (ipv4address, reg_name).first();
     let port = (':', char::when(char::is_ascii_digit).repeated(..).collect())
         .seq()
         .map(|[_colon, port]| port);
@@ -760,4 +790,14 @@ fn url_authority_unpack() {
     assert_eq!(host.to_string(), "example.com");
     assert_eq!(port.to_string(), "3245");
     assert_eq!(input.to_string(), "/path");
+
+    let ParseResult::Match([userinfo, host, port], input) =
+        authority.extract(ByteStream::from("example@192.168.14.57"), None, true)
+    else {
+        panic!();
+    };
+    assert_eq!(userinfo.to_string(), "example");
+    assert_eq!(host.to_string(), "192.168.14.57");
+    assert!(port.is_empty());
+    assert!(input.is_empty());
 }
