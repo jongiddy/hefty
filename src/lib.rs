@@ -327,6 +327,73 @@ where
 {
 }
 
+// A trait to map an extractors response to another format
+pub trait Mappable: Extract + Sized {
+    fn map<Func, Output>(self, func: Func) -> MapParser<Func, Output, Self>
+    where
+        Self: Extract,
+        Func: Fn(Self::Output) -> Output,
+    {
+        MapParser::new(self, func)
+    }
+}
+
+pub struct MapParser<Func, Output, InnerParser>
+where
+    InnerParser: Extract,
+    Func: Fn(InnerParser::Output) -> Output,
+{
+    inner: InnerParser,
+    func: Func,
+}
+
+#[allow(dead_code)]
+impl<Func, Output, InnerParser> MapParser<Func, Output, InnerParser>
+where
+    InnerParser: Extract,
+    Func: Fn(InnerParser::Output) -> Output,
+{
+    fn new(inner: InnerParser, func: Func) -> Self {
+        Self { inner, func }
+    }
+}
+
+impl<Func, Output, InnerParser> Repeatable for MapParser<Func, Output, InnerParser>
+where
+    InnerParser: Extract,
+    Func: Fn(InnerParser::Output) -> Output,
+{
+}
+
+impl<Func, Output, InnerParser> Extract for MapParser<Func, Output, InnerParser>
+where
+    InnerParser: Extract,
+    Func: Fn(InnerParser::Output) -> Output,
+{
+    type State = InnerParser::State;
+    type Output = Output;
+
+    fn extract(
+        &self,
+        input: ByteStream,
+        state: Option<Self::State>,
+        last: bool,
+    ) -> ParseResult<Self::State, Self::Output> {
+        match self.inner.extract(input, state, last) {
+            ParseResult::NoMatch => ParseResult::NoMatch,
+            ParseResult::Partial(state) => ParseResult::Partial(state),
+            ParseResult::Match(output, input) => ParseResult::Match((self.func)(output), input),
+        }
+    }
+}
+
+impl<Parser> Mappable for Parser
+where
+    Parser: Extract,
+    Parser::Output: IntoIterator<Item = ByteStream>,
+{
+}
+
 // b'a'
 impl Extract for u8 {
     type State = ();
@@ -776,7 +843,9 @@ mod tests {
 
     use crate::{byte, ExtractTuple};
 
-    use super::{ByteStream, Collectable, Extract, ParseAny, ParseResult, ParseWhen, Repeatable};
+    use super::{
+        ByteStream, Collectable, Extract, Mappable, ParseAny, ParseResult, ParseWhen, Repeatable,
+    };
 
     #[test]
     fn test_byte_literal() {
@@ -1493,6 +1562,49 @@ mod tests {
             panic!();
         };
         assert_eq!(output.to_string(), "example.com:3245");
+        assert_eq!(input.to_string(), "/path");
+    }
+
+    #[test]
+    fn url_authority_unpack() {
+        // Build a parser for `authority` from https://www.rfc-editor.org/rfc/rfc3986.html#appendix-A
+        // Share sub-parsers using borrowed references.
+        let unreserved = char::when(|c| {
+            char::is_ascii_alphanumeric(&c) || c == '-' || c == '.' || c == '_' || c == '~'
+        });
+        let pct_encoded = ('%', char::when(char::is_ascii_hexdigit).times(2).collect())
+            .seq()
+            .collect();
+        let sub_delims = ('!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=').any();
+
+        let userinfo = (
+            (&unreserved, &pct_encoded, &sub_delims, ':')
+                .any()
+                .repeated(..)
+                .collect(),
+            '@',
+        )
+            .seq()
+            .map(|[userinfo, _at]| userinfo);
+        let reg_name = (&unreserved, &pct_encoded, &sub_delims)
+            .any()
+            .repeated(..)
+            .collect();
+        // host format is first match of IPv4, IPv6, or reg-name
+        let host = (reg_name,).first();
+        let port = (':', char::when(char::is_ascii_digit).repeated(..).collect())
+            .seq()
+            .map(|[_colon, port]| port);
+        let authority = (userinfo.optional(), host, port.optional()).seq();
+
+        let ParseResult::Match([userinfo, host, port], input) =
+            authority.extract(ByteStream::from("example.com:3245/path"), None, true)
+        else {
+            panic!();
+        };
+        assert!(userinfo.is_empty());
+        assert_eq!(host.to_string(), "example.com");
+        assert_eq!(port.to_string(), "3245");
         assert_eq!(input.to_string(), "/path");
     }
 }
