@@ -1,7 +1,3 @@
-#![feature(assert_matches)]
-#![feature(associated_type_defaults)]
-#![feature(str_internals)]
-
 use repeatable::Repeatable;
 
 mod byte_stream;
@@ -35,19 +31,25 @@ impl<State, Output> std::fmt::Debug for ParseResult<State, Output> {
     }
 }
 
-/// A trait to extract a type from a `ByteStream`. The `extract` method is initially called with a
-/// state of `None`. If the type is extracted fully, the method returns `ParseResult::Match` with
-/// the extracted type and the remaining `ByteStream`. If the type cannot be extracted because it
-/// does not match, the `ParseResult::NoMatch` is returned. If the extraction reads to the end of
-/// the `ByteStream` but needs more data to extract the type it returns `ParseResult::Partial` with
-/// a state. The next call to `extract` with a new `ByteStream` must pass in the returned state to
-/// continue parsing the type. If the end of the stream is reached while the state is `Partial` call
-/// `stop` with the state as some extractors can return `ParseResult::Match` in this case. e.g.
-/// `'a'.repeated(2..5)` will return Partial for "aaa" since it may be part of a longer pattern, but
-/// on end of stream, will return the 3 characters as a match.
+/// A trait to extract a type from a `ByteStream`.
+///
+/// The `extract` method is initially called with a state of `None`. If the type is extracted fully,
+/// the method returns `ParseResult::Match` with the extracted type and the remaining `ByteStream`.
+///
+/// If the type cannot be extracted because it does not match, the method returns
+/// `ParseResult::NoMatch`.
+///
+/// If the extraction reads to the end of the `ByteStream` but needs more data to extract the type
+/// it returns `ParseResult::Partial` with a state. The next call to `extract` with a new
+/// `ByteStream` must pass in the returned state to continue parsing the type.
+///
+/// If the end of the stream is reached call `extract` with `last=true`, as some extractors can
+/// return `ParseResult::Match` in this case. e.g. `'a'.repeated(2..5)` will return `Partial` for
+/// "aaa" since it may be part of a longer pattern, but on end of stream, will return the 3
+/// characters as a match.
 pub trait Extract {
     type State;
-    type Output = ByteStream;
+    type Output;
 
     fn extract(
         &self,

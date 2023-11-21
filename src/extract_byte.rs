@@ -6,6 +6,7 @@ use crate::{ByteStream, Extract, ParseAny, ParseResult, ParseWhen};
 // b'a'
 impl Extract for u8 {
     type State = ();
+    type Output = ByteStream;
 
     fn extract(
         &self,
@@ -36,6 +37,7 @@ impl Repeatable for u8 {}
 // b"abc".extract()
 impl<const N: usize> Extract for [u8; N] {
     type State = (usize, ByteStream);
+    type Output = ByteStream;
 
     fn extract(
         &self,
@@ -70,6 +72,7 @@ pub struct byte {}
 // byte::any()
 impl Extract for AnyByteParser {
     type State = ();
+    type Output = ByteStream;
 
     fn extract(
         &self,
@@ -106,6 +109,7 @@ where
     F: Fn(u8) -> bool,
 {
     type State = ();
+    type Output = ByteStream;
 
     fn extract(
         &self,

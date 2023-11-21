@@ -1,4 +1,3 @@
-use std::assert_matches::assert_matches;
 use std::collections::VecDeque;
 
 use bytes::Buf;
@@ -237,7 +236,7 @@ fn test_multibyte_char_nearly() {
     };
     let input = buffer;
     let output = '₭'.extract(input, Some(state), true);
-    assert_matches!(output, ParseResult::NoMatch);
+    assert!(matches!(output, ParseResult::NoMatch));
 }
 
 #[test]
