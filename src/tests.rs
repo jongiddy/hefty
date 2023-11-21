@@ -97,33 +97,6 @@ fn test_byte_when() {
 }
 
 #[test]
-fn test_byte_when_ref() {
-    let buffer = ByteStream::from("A4");
-    let input = buffer.clone();
-    assert_eq!(input.remaining(), 2);
-    let ParseResult::Match(output, input) =
-        byte::when(u8::is_ascii_alphabetic).extract(input, None, false)
-    else {
-        panic!()
-    };
-    assert_eq!(output.to_string(), "A");
-    let ParseResult::NoMatch =
-        byte::when(u8::is_ascii_alphabetic).extract(input.clone(), None, false)
-    else {
-        panic!()
-    };
-    let ParseResult::Match(output, input) =
-        byte::when(u8::is_ascii_digit).extract(input, None, false)
-    else {
-        panic!()
-    };
-    assert_eq!(output.to_string(), "4");
-    let ParseResult::Partial(_) = byte::when(u8::is_ascii_digit).extract(input, None, false) else {
-        panic!()
-    };
-}
-
-#[test]
 fn test_str_literal() {
     let buffer = ByteStream::from("hello, world!");
     let input = buffer.clone();
@@ -206,24 +179,23 @@ fn test_multibyte_char() {
 
     let input = buffer.clone();
     let ParseResult::NoMatch =
-        char::when(char::is_ascii_alphabetic).extract(input.clone(), None, false)
+        char::when(|c| c.is_ascii_alphabetic()).extract(input.clone(), None, false)
     else {
         panic!()
     };
-    // closure with ref arg does not get inferred for<'a> lifetime if placed in when arg
-    let not_alphabetic = |c: &char| -> bool { !c.is_ascii_alphabetic() };
-    let ParseResult::Match(output, input) = char::when(not_alphabetic).extract(input, None, false)
+    let ParseResult::Match(output, input) =
+        char::when(|c| !c.is_ascii_alphabetic()).extract(input, None, false)
     else {
         panic!()
     };
     assert_eq!(output.to_string(), "€");
     let ParseResult::Match(output, input) =
-        char::when(char::is_ascii_digit).extract(input, None, false)
+        char::when(|c| c.is_ascii_digit()).extract(input, None, false)
     else {
         panic!()
     };
     assert_eq!(output.to_string(), "4");
-    let ParseResult::Partial(_) = char::when(char::is_ascii_digit).extract(input, None, false)
+    let ParseResult::Partial(_) = char::when(|c| c.is_ascii_digit()).extract(input, None, false)
     else {
         panic!()
     };
@@ -619,7 +591,10 @@ fn json_string() {
                     'n',
                     'r',
                     't',
-                    ('u', char::when(char::is_ascii_hexdigit).times(4).collect())
+                    (
+                        'u',
+                        char::when(|c| c.is_ascii_hexdigit()).times(4).collect(),
+                    )
                         .seq()
                         .collect(),
                 )
@@ -683,7 +658,10 @@ fn url_authority() {
     let unreserved = char::when(|c| {
         char::is_ascii_alphanumeric(&c) || c == '-' || c == '.' || c == '_' || c == '~'
     });
-    let pct_encoded = ('%', char::when(char::is_ascii_hexdigit).times(2).collect())
+    let pct_encoded = (
+        '%',
+        char::when(|c| c.is_ascii_hexdigit()).times(2).collect(),
+    )
         .seq()
         .collect();
     let sub_delims = ('!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=').any();
@@ -703,7 +681,10 @@ fn url_authority() {
         .collect();
     // host format is first match of IPv4, IPv6, or reg-name
     let host = (reg_name,).first();
-    let port = (':', char::when(char::is_ascii_digit).repeated(..).collect())
+    let port = (
+        ':',
+        char::when(|c| c.is_ascii_digit()).repeated(..).collect(),
+    )
         .seq()
         .collect();
     let authority = (userinfo.optional(), host, port.optional())
@@ -726,7 +707,10 @@ fn url_authority_unpack() {
     let unreserved = char::when(|c| {
         char::is_ascii_alphanumeric(&c) || c == '-' || c == '.' || c == '_' || c == '~'
     });
-    let pct_encoded = ('%', char::when(char::is_ascii_hexdigit).times(2).collect())
+    let pct_encoded = (
+        '%',
+        char::when(|c| c.is_ascii_hexdigit()).times(2).collect(),
+    )
         .seq()
         .collect();
     let sub_delims = ('!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=').any();
@@ -739,20 +723,20 @@ fn url_authority_unpack() {
         (
             '2',
             ("0", "1", "2", "3", "4").any(),
-            char::when(char::is_ascii_digit),
+            char::when(|c| c.is_ascii_digit()),
         )
             .seq()
             .collect::<ByteStream>(),
-        ('1', char::when(char::is_ascii_digit).times(2).collect())
+        ('1', char::when(|c| c.is_ascii_digit()).times(2).collect())
             .seq()
             .collect::<ByteStream>(),
         (
             ("1", "2", "3", "4", "5", "6", "7", "8", "9").any(),
-            char::when(char::is_ascii_digit),
+            char::when(|c| c.is_ascii_digit()),
         )
             .seq()
             .collect(),
-        char::when(char::is_ascii_digit),
+        char::when(|c| c.is_ascii_digit()),
     )
         .first();
     let ipv4address = (
@@ -776,7 +760,10 @@ fn url_authority_unpack() {
         .map(|[userinfo, _at]| userinfo);
     // "In order to disambiguate the syntax, we apply the "first-match-wins" algorithm"
     let host = (ipv4address, reg_name).first();
-    let port = (':', char::when(char::is_ascii_digit).repeated(..).collect())
+    let port = (
+        ':',
+        char::when(|c| c.is_ascii_digit()).repeated(..).collect(),
+    )
         .seq()
         .map(|[_colon, port]| port);
     let authority = (userinfo.optional(), host, port.optional()).seq();
