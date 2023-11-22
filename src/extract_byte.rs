@@ -50,10 +50,10 @@ impl<const N: usize> Extract for [u8; N] {
         bytes.advance(seen);
         let matched = input.common_prefix_length(bytes);
         if matched == bytes.len() {
-            output.extend(input.take_before(matched));
+            output.merge(input.take_before(matched));
             ParseResult::Match(output, input)
         } else if !last && matched == input.remaining() {
-            output.extend(input.take_before(matched));
+            output.merge(input.take_before(matched));
             ParseResult::Partial((seen + matched, output))
         } else {
             ParseResult::NoMatch

@@ -31,10 +31,7 @@ impl ByteStream {
         }
     }
 
-    pub fn extend(&mut self, stream: ByteStream) {
-        if stream.is_empty() {
-            return;
-        }
+    pub fn merge(&mut self, stream: ByteStream) {
         match self.chunks {
             ByteChunks::Empty => {
                 *self = stream;
@@ -210,7 +207,7 @@ impl FromIterator<ByteStream> for ByteStream {
     fn from_iter<T: IntoIterator<Item = ByteStream>>(iter: T) -> Self {
         let mut result = ByteStream::default();
         for bs in iter {
-            result.extend(bs);
+            result.merge(bs);
         }
         result
     }

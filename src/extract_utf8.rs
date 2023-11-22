@@ -48,10 +48,10 @@ impl Extract for char {
         bytes.advance(seen as usize);
         let matched = input.common_prefix_length(bytes);
         if matched == bytes.len() {
-            output.extend(input.take_before(matched));
+            output.merge(input.take_before(matched));
             ParseResult::Match(output, input)
         } else if !last && matched == input.remaining() {
-            output.extend(input.take_before(matched));
+            output.merge(input.take_before(matched));
             seen += matched as u8;
             ParseResult::Partial((seen, output))
         } else {
@@ -79,10 +79,10 @@ impl Extract for &str {
         bytes.advance(seen);
         let matched = input.common_prefix_length(bytes);
         if matched == bytes.len() {
-            output.extend(input.take_before(matched));
+            output.merge(input.take_before(matched));
             ParseResult::Match(output, input)
         } else if !last && matched == input.remaining() {
-            output.extend(input.take_before(matched));
+            output.merge(input.take_before(matched));
             seen += matched;
             ParseResult::Partial((seen, output))
         } else {
@@ -129,11 +129,11 @@ impl Extract for AnyCharParser {
                 ParseResult::NoMatch
             } else {
                 required -= input_len;
-                output.extend(input.take_before(input_len));
+                output.merge(input.take_before(input_len));
                 ParseResult::Partial((required, output))
             }
         } else {
-            output.extend(input.take_before(required));
+            output.merge(input.take_before(required));
             ParseResult::Match(output, input)
         }
     }
@@ -189,11 +189,11 @@ where
             if last {
                 ParseResult::NoMatch
             } else {
-                output.extend(input.take_before(input_len));
+                output.merge(input.take_before(input_len));
                 ParseResult::Partial((required - input_len, output))
             }
         } else {
-            output.extend(input.take_before(required));
+            output.merge(input.take_before(required));
             let mut bytes = [0; 4];
             let len = output.fill_slice(&mut bytes);
             match std::str::from_utf8(&bytes[..len]) {
