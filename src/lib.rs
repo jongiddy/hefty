@@ -16,7 +16,7 @@ pub use self::iterable::{Collectable, Mappable};
 pub use self::tuple::ExtractTuple;
 
 pub enum ParseResult<State, Output> {
-    NoMatch,
+    NoMatch(u64),
     Partial(State),
     Match(Output, ByteStream),
 }
@@ -24,7 +24,7 @@ pub enum ParseResult<State, Output> {
 impl<State, Output> std::fmt::Debug for ParseResult<State, Output> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NoMatch => write!(f, "NoMatch"),
+            Self::NoMatch(arg0) => f.debug_tuple("NoMatch").field(arg0).finish(),
             Self::Partial(_arg0) => write!(f, "Partial"),
             Self::Match(_arg0, _arg1) => write!(f, "Match"),
         }

@@ -26,7 +26,7 @@ fn test_byte_literal() {
     };
 
     let input = buffer.clone();
-    let ParseResult::NoMatch = b'3'.extract(input, None, false) else {
+    let ParseResult::NoMatch(0) = b'3'.extract(input, None, false) else {
         panic!()
     };
 }
@@ -43,7 +43,7 @@ fn test_byte_array_literal() {
         panic!()
     };
     assert_eq!(output.to_string(), ", ");
-    let ParseResult::NoMatch = b" everyone!".extract(input, None, false) else {
+    let ParseResult::NoMatch(7) = b" everyone!".extract(input, None, false) else {
         panic!()
     };
 }
@@ -77,7 +77,7 @@ fn test_byte_when() {
         panic!()
     };
     assert_eq!(output.to_string(), "A");
-    let ParseResult::NoMatch =
+    let ParseResult::NoMatch(1) =
         byte::when(|b: u8| u8::is_ascii_alphabetic(&b)).extract(input.clone(), None, false)
     else {
         panic!()
@@ -107,7 +107,7 @@ fn test_str_literal() {
         panic!()
     };
     assert_eq!(output.to_string(), ", ");
-    let ParseResult::NoMatch = " everyone!".extract(input, None, false) else {
+    let ParseResult::NoMatch(7) = " everyone!".extract(input, None, false) else {
         panic!()
     };
 }
@@ -122,7 +122,8 @@ fn test_1_byte_char() {
     };
     assert_eq!(output.to_string(), "2");
     assert_eq!(input.iter().next(), Some(&b'3'));
-    let ParseResult::NoMatch = '2'.extract(input, None, false) else {
+    assert_eq!(input.position(), 1);
+    let ParseResult::NoMatch(1) = '2'.extract(input, None, false) else {
         panic!()
     };
 }
@@ -137,7 +138,7 @@ fn test_multibyte_char() {
     };
     assert_eq!(output.to_string(), "€");
     assert_eq!(input.iter().next(), Some(&b'4'));
-    let ParseResult::NoMatch = '€'.extract(input, None, false) else {
+    let ParseResult::NoMatch(3) = '€'.extract(input, None, false) else {
         panic!()
     };
 
@@ -155,7 +156,8 @@ fn test_multibyte_char() {
     };
 
     let input = buffer.clone();
-    let ParseResult::NoMatch = char::when(char::is_alphabetic).extract(input.clone(), None, false)
+    let ParseResult::NoMatch(0) =
+        char::when(char::is_alphabetic).extract(input.clone(), None, false)
     else {
         panic!()
     };
@@ -177,7 +179,7 @@ fn test_multibyte_char() {
     };
 
     let input = buffer.clone();
-    let ParseResult::NoMatch =
+    let ParseResult::NoMatch(0) =
         char::when(|c| c.is_ascii_alphabetic()).extract(input.clone(), None, false)
     else {
         panic!()
@@ -217,7 +219,7 @@ fn test_multibyte_char_byte_by_byte() {
     };
     assert_eq!(output.to_string(), "€");
     assert_eq!(input.iter().next(), Some(&b'4'));
-    let ParseResult::NoMatch = '€'.extract(input, None, false) else {
+    let ParseResult::NoMatch(3) = '€'.extract(input, None, false) else {
         panic!()
     };
 }
@@ -236,7 +238,7 @@ fn test_multibyte_char_nearly() {
     };
     let input = buffer;
     let output = '₭'.extract(input, Some(state), true);
-    assert!(matches!(output, ParseResult::NoMatch));
+    assert!(matches!(output, ParseResult::NoMatch(0)));
 }
 
 #[test]
@@ -391,7 +393,7 @@ fn test_sequence() {
     else {
         panic!()
     };
-    let ParseResult::NoMatch =
+    let ParseResult::NoMatch(5) =
         ("hello", char::when(char::is_alphabetic))
             .seq()
             .extract(buffer, Some(state), true)
@@ -635,7 +637,7 @@ fn json_string() {
     assert_eq!(output.to_string(), r#""hello, \"!""#);
     assert_eq!(input.to_string(), ",");
 
-    let ParseResult::NoMatch =
+    let ParseResult::NoMatch(0) =
         json_string_parser.extract(ByteStream::from(r#""hello, \ufour!","#), None, true)
     else {
         panic!();

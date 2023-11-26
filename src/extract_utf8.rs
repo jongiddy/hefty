@@ -44,7 +44,7 @@ impl Extract for char {
     ) -> ParseResult<Self::State, ByteStream> {
         let mut char_buf = [0u8; 4];
         let mut bytes = self.encode_utf8(&mut char_buf).as_bytes();
-        let (mut seen, mut output) = state.unwrap_or((0, ByteStream::default()));
+        let (mut seen, mut output) = state.unwrap_or((0, ByteStream::new(input.position())));
         bytes.advance(seen as usize);
         let matched = input.common_prefix_length(bytes);
         if matched == bytes.len() {
@@ -55,7 +55,7 @@ impl Extract for char {
             seen += matched as u8;
             ParseResult::Partial((seen, output))
         } else {
-            ParseResult::NoMatch
+            ParseResult::NoMatch(output.position())
         }
     }
 }
@@ -86,7 +86,7 @@ impl Extract for &str {
             seen += matched;
             ParseResult::Partial((seen, output))
         } else {
-            ParseResult::NoMatch
+            ParseResult::NoMatch(output.position())
         }
     }
 }
@@ -106,17 +106,17 @@ impl Extract for AnyCharParser {
         state: Option<Self::State>,
         last: bool,
     ) -> ParseResult<Self::State, ByteStream> {
-        let (mut required, mut output) = state.unwrap_or((0, ByteStream::default()));
+        let (mut required, mut output) = state.unwrap_or((0, ByteStream::new(input.position())));
         if required == 0 {
             match input.iter().next() {
                 Some(&b) => {
                     required = utf8_char_width(b);
                     if required == 0 {
-                        return ParseResult::NoMatch;
+                        return ParseResult::NoMatch(output.position());
                     }
                 }
                 None if last => {
-                    return ParseResult::NoMatch;
+                    return ParseResult::NoMatch(output.position());
                 }
                 None => {
                     return ParseResult::Partial((required, output));
@@ -126,7 +126,7 @@ impl Extract for AnyCharParser {
         let input_len = input.remaining();
         if input_len < required {
             if last {
-                ParseResult::NoMatch
+                ParseResult::NoMatch(output.position())
             } else {
                 required -= input_len;
                 output.merge(input.take_before(input_len));
@@ -173,11 +173,11 @@ where
                 Some(&b) => {
                     required = utf8_char_width(b);
                     if required == 0 {
-                        return ParseResult::NoMatch;
+                        return ParseResult::NoMatch(output.position());
                     }
                 }
                 None if last => {
-                    return ParseResult::NoMatch;
+                    return ParseResult::NoMatch(output.position());
                 }
                 None => {
                     return ParseResult::Partial((required, output));
@@ -187,7 +187,7 @@ where
         let input_len = input.remaining();
         if input_len < required {
             if last {
-                ParseResult::NoMatch
+                ParseResult::NoMatch(output.position())
             } else {
                 output.merge(input.take_before(input_len));
                 ParseResult::Partial((required - input_len, output))
@@ -199,15 +199,15 @@ where
             match std::str::from_utf8(&bytes[..len]) {
                 Ok(s) => {
                     let Some(c) = s.chars().next() else {
-                        return ParseResult::NoMatch;
+                        return ParseResult::NoMatch(output.position());
                     };
                     if (self.0)(c) {
                         ParseResult::Match(output, input)
                     } else {
-                        ParseResult::NoMatch
+                        ParseResult::NoMatch(output.position())
                     }
                 }
-                Err(_) => ParseResult::NoMatch,
+                Err(_) => ParseResult::NoMatch(output.position()),
             }
         }
     }

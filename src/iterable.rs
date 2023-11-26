@@ -53,7 +53,7 @@ where
         last: bool,
     ) -> ParseResult<Self::State, Self::Output> {
         match self.inner.extract(input, state, last) {
-            ParseResult::NoMatch => ParseResult::NoMatch,
+            ParseResult::NoMatch(position) => ParseResult::NoMatch(position),
             ParseResult::Partial(state) => ParseResult::Partial(state),
             ParseResult::Match(output, input) => {
                 ParseResult::Match(output.into_iter().collect(), input)
@@ -122,7 +122,7 @@ where
         last: bool,
     ) -> ParseResult<Self::State, Self::Output> {
         match self.inner.extract(input, state, last) {
-            ParseResult::NoMatch => ParseResult::NoMatch,
+            ParseResult::NoMatch(position) => ParseResult::NoMatch(position),
             ParseResult::Partial(state) => ParseResult::Partial(state),
             ParseResult::Match(output, input) => ParseResult::Match((self.func)(output), input),
         }

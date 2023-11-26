@@ -48,7 +48,7 @@ where
             .unwrap_or((None, ByteStream::new(input.position())));
         saved.append(&input);
         match self.inner.extract(input, inner_state, last) {
-            ParseResult::NoMatch => ParseResult::Match(Self::Output::default(), saved),
+            ParseResult::NoMatch(_) => ParseResult::Match(Self::Output::default(), saved),
             ParseResult::Partial(_) if last => ParseResult::Match(Self::Output::default(), saved),
             ParseResult::Partial(inner_state) => ParseResult::Partial((inner_state, saved)),
             ParseResult::Match(output, input) => ParseResult::Match(output, input),
@@ -81,16 +81,17 @@ where
         state: Option<Self::State>,
         last: bool,
     ) -> ParseResult<Self::State, Self::Output> {
+        let default_position = input.position();
         let (mut inner_state, mut output) = state
             .map(|(s, o)| (Some(s), o))
             .unwrap_or((None, Vec::new()));
         while output.len() < self.times {
             match self.inner.extract(input, inner_state, last) {
-                ParseResult::NoMatch => {
-                    return ParseResult::NoMatch;
+                ParseResult::NoMatch(position) => {
+                    return ParseResult::NoMatch(position);
                 }
                 ParseResult::Partial(_) if last => {
-                    return ParseResult::NoMatch;
+                    return ParseResult::NoMatch(default_position);
                 }
                 ParseResult::Partial(inner_state) => {
                     return ParseResult::Partial((inner_state, output));
@@ -142,16 +143,17 @@ where
         state: Option<Self::State>,
         last: bool,
     ) -> ParseResult<Self::State, Self::Output> {
+        let default_position = input.position();
         let (mut inner_state, mut saved, mut output) = state
             .map(|(s, saved, output)| (Some(s), saved, output))
             .unwrap_or((None, ByteStream::new(input.position()), Vec::new()));
         while output.len() < self.min {
             match self.inner.extract(input, inner_state, last) {
-                ParseResult::NoMatch => {
-                    return ParseResult::NoMatch;
+                ParseResult::NoMatch(position) => {
+                    return ParseResult::NoMatch(position);
                 }
                 ParseResult::Partial(_) if last => {
-                    return ParseResult::NoMatch;
+                    return ParseResult::NoMatch(default_position);
                 }
                 ParseResult::Partial(inner_state) => {
                     return ParseResult::Partial((inner_state, saved, output));
@@ -166,7 +168,7 @@ where
         while output.len() < self.max {
             saved.append(&input);
             match self.inner.extract(input, inner_state, last) {
-                ParseResult::NoMatch => {
+                ParseResult::NoMatch(_) => {
                     return ParseResult::Match(output, saved);
                 }
                 ParseResult::Partial(_) if last => {

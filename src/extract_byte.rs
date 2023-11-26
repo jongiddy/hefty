@@ -16,16 +16,18 @@ impl Extract for u8 {
     ) -> ParseResult<Self::State, ByteStream> {
         if input.is_empty() {
             if last {
-                ParseResult::NoMatch
+                ParseResult::NoMatch(input.position())
             } else {
                 ParseResult::Partial(())
             }
         } else {
+            dbg!(input.position());
             let output = input.take_before(1);
             if output.iter().next().unwrap() == self {
                 ParseResult::Match(output, input)
             } else {
-                ParseResult::NoMatch
+                dbg!(output.position());
+                ParseResult::NoMatch(output.position())
             }
         }
     }
@@ -56,7 +58,7 @@ impl<const N: usize> Extract for [u8; N] {
             output.merge(input.take_before(matched));
             ParseResult::Partial((seen + matched, output))
         } else {
-            ParseResult::NoMatch
+            ParseResult::NoMatch(output.position())
         }
     }
 }
@@ -83,7 +85,7 @@ impl Extract for AnyByteParser {
         if input.has_remaining() {
             ParseResult::Match(input.take_before(1), input)
         } else if last {
-            ParseResult::NoMatch
+            ParseResult::NoMatch(input.position())
         } else {
             ParseResult::Partial(())
         }
@@ -120,8 +122,8 @@ where
         let first = input.iter().next().cloned();
         match first {
             Some(b) if (self.0)(b) => ParseResult::Match(input.take_before(1), input),
-            Some(_) => ParseResult::NoMatch,
-            None if last => ParseResult::NoMatch,
+            Some(_) => ParseResult::NoMatch(input.position()),
+            None if last => ParseResult::NoMatch(input.position()),
             None => ParseResult::Partial(()),
         }
     }

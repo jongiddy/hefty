@@ -30,7 +30,7 @@ where
             if let Some(inner_state) = &mut state[[i]] {
                 let input = input.clone();
                 match self.tuple[[i]].extract(input, inner_state.take(), last) {
-                    ParseResult::NoMatch => {
+                    ParseResult::NoMatch(_) => {
                         state[[i]] = None;
                     }
                     ParseResult::Partial(new_state) => {
@@ -46,7 +46,7 @@ where
             }
         }
         if exhausted {
-            return ParseResult::NoMatch;
+            return ParseResult::NoMatch(input.position());
         } else {
             return ParseResult::Partial(state);
         }
@@ -78,11 +78,11 @@ where
         let mut state = state.unwrap_or(typle_expand!(None));
         for typle_const!(i) in 0..T::LEN {
             state[[i]] = match state[[i]].take() {
-                Some(ParseResult::NoMatch) => Some(ParseResult::NoMatch),
+                Some(ParseResult::NoMatch(position)) => Some(ParseResult::NoMatch(position)),
                 Some(ParseResult::Partial(inner_state)) => {
                     let res = self.tuple[[i]].extract(input.clone(), Some(inner_state), last);
                     match res {
-                        ParseResult::NoMatch => Some(ParseResult::NoMatch),
+                        ParseResult::NoMatch(position) => Some(ParseResult::NoMatch(position)),
                         ParseResult::Partial(state) => {
                             if !last {
                                 first = false;
@@ -106,7 +106,7 @@ where
                 None => {
                     let res = self.tuple[[i]].extract(input.clone(), None, last);
                     match res {
-                        ParseResult::NoMatch => Some(ParseResult::NoMatch),
+                        ParseResult::NoMatch(position) => Some(ParseResult::NoMatch(position)),
                         ParseResult::Partial(state) => {
                             if !last {
                                 first = false;
@@ -124,7 +124,7 @@ where
             };
         }
         if first {
-            return ParseResult::NoMatch;
+            return ParseResult::NoMatch(input.position());
         } else {
             return ParseResult::Partial(state);
         }
@@ -160,18 +160,19 @@ where
         state: Option<Self::State>,
         last: bool,
     ) -> ParseResult<Self::State, Self::Output> {
+        let default_position = input.position();
         #[allow(unused_mut)]
         let mut state = state.unwrap_or(Self::State::S::<typle_index!(0)>(None, []));
         for typle_const!(i) in 0..T::LEN {
             #[allow(irrefutable_let_patterns)]
             if let Self::State::S::<typle_index!(i)>(inner_state, output) = state {
                 match self.tuple[[i]].extract(input, inner_state, last) {
-                    ParseResult::NoMatch => {
-                        return ParseResult::NoMatch;
+                    ParseResult::NoMatch(position) => {
+                        return ParseResult::NoMatch(position);
                     }
                     ParseResult::Partial(inner_state) => {
                         if last {
-                            return ParseResult::NoMatch;
+                            return ParseResult::NoMatch(default_position);
                         } else {
                             return ParseResult::Partial(Self::State::S::<typle_index!(i)>(
                                 Some(inner_state),
@@ -265,7 +266,7 @@ mod tests {
         else {
             panic!()
         };
-        let ParseResult::NoMatch =
+        let ParseResult::NoMatch(5) =
             ("hello", char::when(char::is_alphabetic))
                 .seq()
                 .extract(buffer, Some(state), false)
