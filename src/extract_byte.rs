@@ -46,7 +46,7 @@ impl<const N: usize> Extract for [u8; N] {
         last: bool,
     ) -> ParseResult<Self::State, ByteStream> {
         let mut bytes = self.as_slice();
-        let (seen, mut output) = state.unwrap_or((0, ByteStream::default()));
+        let (seen, mut output) = state.unwrap_or((0, ByteStream::new(input.position())));
         bytes.advance(seen);
         let matched = input.common_prefix_length(bytes);
         if matched == bytes.len() {

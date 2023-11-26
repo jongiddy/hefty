@@ -75,7 +75,7 @@ impl Extract for &str {
         last: bool,
     ) -> ParseResult<Self::State, ByteStream> {
         let mut bytes = self.as_bytes();
-        let (mut seen, mut output) = state.unwrap_or((0, ByteStream::default()));
+        let (mut seen, mut output) = state.unwrap_or((0, ByteStream::new(input.position())));
         bytes.advance(seen);
         let matched = input.common_prefix_length(bytes);
         if matched == bytes.len() {
@@ -167,7 +167,7 @@ where
         state: Option<Self::State>,
         last: bool,
     ) -> ParseResult<Self::State, ByteStream> {
-        let (mut required, mut output) = state.unwrap_or((0, ByteStream::default()));
+        let (mut required, mut output) = state.unwrap_or((0, ByteStream::new(input.position())));
         if required == 0 {
             match input.iter().next() {
                 Some(&b) => {

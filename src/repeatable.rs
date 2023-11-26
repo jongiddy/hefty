@@ -45,7 +45,7 @@ where
     ) -> ParseResult<Self::State, Self::Output> {
         let (inner_state, mut saved) = state
             .map(|(s, saved)| (Some(s), saved))
-            .unwrap_or((None, ByteStream::default()));
+            .unwrap_or((None, ByteStream::new(input.position())));
         saved.append(&input);
         match self.inner.extract(input, inner_state, last) {
             ParseResult::NoMatch => ParseResult::Match(Self::Output::default(), saved),
@@ -144,7 +144,7 @@ where
     ) -> ParseResult<Self::State, Self::Output> {
         let (mut inner_state, mut saved, mut output) = state
             .map(|(s, saved, output)| (Some(s), saved, output))
-            .unwrap_or((None, ByteStream::default(), Vec::new()));
+            .unwrap_or((None, ByteStream::new(input.position()), Vec::new()));
         while output.len() < self.min {
             match self.inner.extract(input, inner_state, last) {
                 ParseResult::NoMatch => {
