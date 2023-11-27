@@ -1,5 +1,6 @@
 use bytes::Buf as _;
 
+use crate::iterable::OutputToByteStream;
 use crate::repeatable::Repeatable;
 use crate::{ByteStream, Extract, ParseAny, ParseResult, ParseWhen};
 
@@ -21,12 +22,10 @@ impl Extract for u8 {
                 ParseResult::Partial(())
             }
         } else {
-            dbg!(input.position());
             let output = input.take_before(1);
             if output.iter().next().unwrap() == self {
                 ParseResult::Match(output, input)
             } else {
-                dbg!(output.position());
                 ParseResult::NoMatch(output.position())
             }
         }
@@ -35,6 +34,12 @@ impl Extract for u8 {
 
 // b'a'.optional()
 impl Repeatable for u8 {}
+
+impl OutputToByteStream for u8 {
+    fn output_to_bytestream(output: Self::Output) -> ByteStream {
+        output
+    }
+}
 
 // b"abc".extract()
 impl<const N: usize> Extract for [u8; N] {
@@ -66,6 +71,12 @@ impl<const N: usize> Extract for [u8; N] {
 // b"abc".optional()
 impl<const N: usize> Repeatable for [u8; N] {}
 
+impl<const N: usize> OutputToByteStream for [u8; N] {
+    fn output_to_bytestream(output: Self::Output) -> ByteStream {
+        output
+    }
+}
+
 pub struct AnyByteParser;
 
 #[allow(non_camel_case_types)]
@@ -94,6 +105,12 @@ impl Extract for AnyByteParser {
 
 // byte::any().optional()
 impl Repeatable for AnyByteParser {}
+
+impl OutputToByteStream for AnyByteParser {
+    fn output_to_bytestream(output: Self::Output) -> ByteStream {
+        output
+    }
+}
 
 impl ParseAny for byte {
     type Parser = AnyByteParser;
@@ -131,6 +148,15 @@ where
 
 // byte::when(|u8|...).optional()
 impl<F> Repeatable for ByteWhenParser<F> where F: Fn(u8) -> bool {}
+
+impl<F> OutputToByteStream for ByteWhenParser<F>
+where
+    F: Fn(u8) -> bool,
+{
+    fn output_to_bytestream(output: Self::Output) -> ByteStream {
+        output
+    }
+}
 
 impl<F> ParseWhen<u8, F> for byte
 where

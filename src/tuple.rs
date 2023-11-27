@@ -1,6 +1,7 @@
 use typle::typle;
 
 use crate::byte_stream::ByteStream;
+use crate::iterable::OutputToByteStream;
 use crate::{Extract, ParseResult, Repeatable};
 
 pub struct TupleAny<T> {
@@ -15,7 +16,7 @@ impl<T> Extract for TupleAny<T>
 where
     T: Tuple<impl Extract<Output = ByteStream>>,
 {
-    type State = typle_expand!(Option<Option<T::State>>);
+    type State = typle_expand!(Option<Option<T<{ INDEX }>::State>>);
     type Output = ByteStream;
 
     fn extract(
@@ -53,6 +54,16 @@ where
     }
 }
 
+#[typle(Tuple for 1..=12)]
+impl<T> OutputToByteStream for TupleAny<T>
+where
+    T: Tuple<impl Extract<Output = ByteStream>>,
+{
+    fn output_to_bytestream(output: Self::Output) -> ByteStream {
+        output
+    }
+}
+
 pub struct TupleFirst<T> {
     tuple: T,
 }
@@ -65,7 +76,7 @@ impl<T> Extract for TupleFirst<T>
 where
     T: Tuple<impl Extract<Output = ByteStream>>,
 {
-    type State = typle_expand!(Option<ParseResult<T::State, ByteStream>>);
+    type State = typle_expand!(Option<ParseResult<T<{ INDEX }>::State, ByteStream>>);
     type Output = ByteStream;
 
     fn extract(
@@ -132,11 +143,27 @@ where
 }
 
 #[typle(Tuple for 1..=12)]
-pub enum TupleState<T>
+impl<T> OutputToByteStream for TupleFirst<T>
 where
     T: Tuple<impl Extract<Output = ByteStream>>,
 {
-    S(Option<T::State>, [ByteStream; T::INDEX]) = typle_variants!(),
+    fn output_to_bytestream(output: Self::Output) -> ByteStream {
+        output
+    }
+}
+
+#[typle(Tuple for 1..=12)]
+type TupleSequenceOutput<T>
+where
+    T: Tuple<impl Extract>,
+= typle_expand!(Option<T<{ INDEX }>::Output>);
+
+#[typle(Tuple for 1..=12)]
+pub enum TupleSequenceState<T>
+where
+    T: Tuple<impl Extract>,
+{
+    S(Option<T<{ INDEX }>::State>, TupleSequenceOutput<(T)>) = typle_variants!(),
 }
 
 pub struct TupleSequence<T> {
@@ -144,15 +171,15 @@ pub struct TupleSequence<T> {
 }
 
 #[typle(Tuple for 1..=12)]
-impl<T> Repeatable for TupleSequence<T> where T: Tuple<impl Extract<Output = ByteStream>> {}
+impl<T> Repeatable for TupleSequence<T> where T: Tuple<impl Extract> {}
 
 #[typle(Tuple for 1..=12)]
 impl<T> Extract for TupleSequence<T>
 where
-    T: Tuple<impl Extract<Output = ByteStream>>,
+    T: Tuple<impl Extract>,
 {
-    type State = TupleState<(T)>;
-    type Output = [ByteStream; T::LEN];
+    type State = TupleSequenceState<(T)>;
+    type Output = typle_expand!(<T<{ INDEX }> as Extract>::Output);
 
     fn extract(
         &self,
@@ -162,10 +189,11 @@ where
     ) -> ParseResult<Self::State, Self::Output> {
         let default_position = input.position();
         #[allow(unused_mut)]
-        let mut state = state.unwrap_or(Self::State::S::<typle_index!(0)>(None, []));
+        let mut state =
+            state.unwrap_or(Self::State::S::<typle_index!(0)>(None, typle_expand!(None)));
         for typle_const!(i) in 0..T::LEN {
             #[allow(irrefutable_let_patterns)]
-            if let Self::State::S::<typle_index!(i)>(inner_state, output) = state {
+            if let Self::State::S::<typle_index!(i)>(inner_state, mut output) = state {
                 match self.tuple[[i]].extract(input, inner_state, last) {
                     ParseResult::NoMatch(position) => {
                         return ParseResult::NoMatch(position);
@@ -181,23 +209,36 @@ where
                         }
                     }
                     ParseResult::Match(matched, remain) => {
-                        let mut new_output = <[ByteStream; i + 1]>::default();
-                        output
-                            .into_iter()
-                            .chain(std::iter::once(matched))
-                            .enumerate()
-                            .for_each(|(j, bs)| new_output[j] = bs);
+                        output[[i]] = Some(matched);
                         input = remain;
                         if typle_const!(i + 1 == T::LEN) {
-                            return ParseResult::Match(new_output, input);
+                            return ParseResult::Match(
+                                typle_expand!(output[[INDEX]].unwrap()),
+                                input,
+                            );
                         } else {
-                            state = Self::State::S::<typle_index!(i + 1)>(None, new_output);
+                            state = Self::State::S::<typle_index!(i + 1)>(None, output);
                         }
                     }
                 }
             }
         }
         unreachable!();
+    }
+}
+
+#[typle(Tuple for 1..=12)]
+impl<T> OutputToByteStream for TupleSequence<T>
+where
+    T: Tuple<impl OutputToByteStream>,
+{
+    fn output_to_bytestream(output: Self::Output) -> ByteStream {
+        #[allow(unused_mut)]
+        let mut byte_stream = T::<0>::output_to_bytestream(output.0);
+        for typle_const!(i) in 1..T::LEN {
+            byte_stream.merge(T::<{ i }>::output_to_bytestream(output[[i]]));
+        }
+        byte_stream
     }
 }
 
@@ -243,7 +284,7 @@ mod tests {
     #[test]
     fn test_sequence() {
         let input = ByteStream::from("hello3a");
-        let ParseResult::Match([out1, out2, out3], input) = (
+        let ParseResult::Match((out1, out2, out3), input) = (
             "hello",
             char::when(|c: char| c.is_digit(10)),
             char::when(char::is_alphabetic),
@@ -278,7 +319,7 @@ mod tests {
     #[test]
     fn test_optional_sequence() {
         let input = ByteStream::from("hello, world!");
-        let ParseResult::Match([out1, out2], input) =
+        let ParseResult::Match((out1, out2), input) =
             ("hello", char::when(|c: char| c.is_digit(10)))
                 .seq()
                 .optional()
@@ -290,7 +331,7 @@ mod tests {
         assert!(out2.is_empty());
         assert_eq!(input.to_string(), "hello, world!");
 
-        let ParseResult::Match([out1, out2], input) = ("hello, ", "world!")
+        let ParseResult::Match((out1, out2), input) = ("hello, ", "world!")
             .seq()
             .optional()
             .extract(input, None, true)

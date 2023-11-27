@@ -1,5 +1,6 @@
 use std::ops::RangeBounds;
 
+use crate::iterable::OutputToByteStream;
 use crate::{ByteStream, Extract, ParseResult};
 
 pub trait Repeatable: Extract + Sized {
@@ -56,6 +57,16 @@ where
     }
 }
 
+impl<InnerParser> OutputToByteStream for OptionalParser<InnerParser>
+where
+    InnerParser: OutputToByteStream,
+    InnerParser::Output: Default,
+{
+    fn output_to_bytestream(output: Self::Output) -> ByteStream {
+        InnerParser::output_to_bytestream(output)
+    }
+}
+
 pub struct TimesParser<InnerParser> {
     inner: InnerParser,
     times: usize,
@@ -104,6 +115,18 @@ where
             }
         }
         ParseResult::Match(output, input)
+    }
+}
+
+impl<InnerParser> OutputToByteStream for TimesParser<InnerParser>
+where
+    InnerParser: OutputToByteStream,
+{
+    fn output_to_bytestream(output: Self::Output) -> ByteStream {
+        output
+            .into_iter()
+            .map(|o| InnerParser::output_to_bytestream(o))
+            .collect()
     }
 }
 
@@ -186,5 +209,17 @@ where
             }
         }
         ParseResult::Match(output, input)
+    }
+}
+
+impl<InnerParser> OutputToByteStream for RepeatedParser<InnerParser>
+where
+    InnerParser: OutputToByteStream,
+{
+    fn output_to_bytestream(output: Self::Output) -> ByteStream {
+        output
+            .into_iter()
+            .map(|o| InnerParser::output_to_bytestream(o))
+            .collect()
     }
 }

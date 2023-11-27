@@ -16,7 +16,7 @@ let sub_delims = ('!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=').any();
 let reg_name = (&unreserved, &pct_encoded, &sub_delims)
     .any()
     .repeated(1..255)
-    .collect::<ByteStream>();
+    .collect();
 
 // Parse a hostname arriving as a stream of data.
 let ParseResult::Partial(state) = reg_name.extract(ByteStream::from("www.exa"), None, false)

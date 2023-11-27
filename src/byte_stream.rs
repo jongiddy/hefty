@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 
 use bytes::{Buf, Bytes};
 use either::Either;
+use typle::typle;
 
 #[derive(Debug, Default, Clone)]
 enum ByteChunks {
@@ -251,6 +252,21 @@ impl From<&'static str> for ByteStream {
                 chunks: ByteChunks::One(Bytes::from_static(s.as_bytes())),
             }
         }
+    }
+}
+
+#[typle(Tuple for 1..=12)]
+impl<T> From<T> for ByteStream
+where
+    T: Tuple<impl Into<ByteStream>>,
+{
+    fn from(value: T) -> Self {
+        #[allow(unused_mut)]
+        let mut byte_stream = value.0.into();
+        for typle_const!(i) in 1..T::LEN {
+            byte_stream.merge(value[[i]].into());
+        }
+        byte_stream
     }
 }
 

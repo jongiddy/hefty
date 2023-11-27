@@ -375,7 +375,7 @@ fn test_function() {
 #[test]
 fn test_sequence() {
     let input = ByteStream::from("hello3a");
-    let ParseResult::Match([out1, out2], input) = ("hello", char::when(|c: char| c.is_digit(10)))
+    let ParseResult::Match((out1, out2), input) = ("hello", char::when(|c: char| c.is_digit(10)))
         .seq()
         .extract(input, None, false)
     else {
@@ -405,7 +405,7 @@ fn test_sequence() {
 #[test]
 fn test_optional_sequence() {
     let input = ByteStream::from("hello, world!");
-    let ParseResult::Match([out1, out2], input) = ("hello", char::when(|c: char| c.is_digit(10)))
+    let ParseResult::Match((out1, out2), input) = ("hello", char::when(|c: char| c.is_digit(10)))
         .seq()
         .optional()
         .extract(input, None, false)
@@ -416,7 +416,7 @@ fn test_optional_sequence() {
     assert!(out2.is_empty());
     assert_eq!(input.to_string(), "hello, world!");
 
-    let ParseResult::Match([out1, out2], input) = ("hello, ", "world!")
+    let ParseResult::Match((out1, out2), input) = ("hello, ", "world!")
         .seq()
         .optional()
         .extract(input, None, false)
@@ -508,36 +508,34 @@ fn test_precedence_first() {
 
 #[test]
 fn json_number() {
-    fn is_digit(c: char) -> bool {
-        c.is_ascii_digit()
-    }
     let json_number_parser = (
         '-'.optional(),
         (
             '0',
             (
                 ('1', '2', '3', '4', '5', '6', '7', '8', '9').any(),
-                char::when(is_digit).repeated(..).collect(),
+                char::when(|c| c.is_ascii_digit()).repeated(..),
             )
                 .seq()
                 .collect(),
         )
             .any(),
-        ('.', char::when(is_digit).repeated(..).collect())
+        (
+            '.',
+            char::when(|c| c.is_ascii_digit()).repeated(..).collect(),
+        )
             .seq()
-            .optional()
-            .collect(),
+            .optional(),
         (
             ('e', 'E').any(),
             ('-', '+').any().optional(),
-            char::when(is_digit).repeated(..).collect(),
+            char::when(|c| c.is_ascii_digit()).repeated(..),
         )
             .seq()
-            .optional()
-            .collect(),
+            .optional(),
     )
         .seq()
-        .collect::<ByteStream>();
+        .collect();
 
     let input = ByteStream::from("-123");
     let ParseResult::Partial(state) = json_number_parser.extract(input, None, false) else {
@@ -611,7 +609,7 @@ fn json_string() {
         '"',
     )
         .seq()
-        .collect::<ByteStream>();
+        .collect();
 
     let ParseResult::Match(output, input) =
         json_string_parser.extract(ByteStream::from(r#""hello, world!","#), None, true)
@@ -675,7 +673,7 @@ fn url_authority() {
         '@',
     )
         .seq()
-        .collect::<ByteStream>();
+        .collect();
     let reg_name = (&unreserved, &pct_encoded, &sub_delims)
         .any()
         .repeated(..)
@@ -688,9 +686,7 @@ fn url_authority() {
     )
         .seq()
         .collect();
-    let authority = (userinfo.optional(), host, port.optional())
-        .seq()
-        .collect::<ByteStream>();
+    let authority = (userinfo.optional(), host, port.optional()).seq().collect();
 
     let ParseResult::Match(output, input) =
         authority.extract(ByteStream::from("example.com:3245/path"), None, true)
@@ -718,19 +714,17 @@ fn url_authority_unpack() {
 
     // Using `first` ensures that we match the longest sequence of digits
     let dec_octet = (
-        ("25", ("0", "1", "2", "3", "4", "5").any())
-            .seq()
-            .collect::<ByteStream>(),
+        ("25", ("0", "1", "2", "3", "4", "5").any()).seq().collect(),
         (
             '2',
             ("0", "1", "2", "3", "4").any(),
             char::when(|c| c.is_ascii_digit()),
         )
             .seq()
-            .collect::<ByteStream>(),
-        ('1', char::when(|c| c.is_ascii_digit()).times(2).collect())
+            .collect(),
+        ('1', char::when(|c| c.is_ascii_digit()).times(2))
             .seq()
-            .collect::<ByteStream>(),
+            .collect(),
         (
             ("1", "2", "3", "4", "5", "6", "7", "8", "9").any(),
             char::when(|c| c.is_ascii_digit()),
@@ -743,33 +737,28 @@ fn url_authority_unpack() {
     let ipv4address = (
         &dec_octet, '.', &dec_octet, '.', &dec_octet, '.', &dec_octet,
     )
-        .seq()
-        .collect();
-    let reg_name = (&unreserved, &pct_encoded, &sub_delims)
-        .any()
-        .repeated(..)
-        .collect();
+        .seq();
+    let reg_name = (&unreserved, &pct_encoded, &sub_delims).any().repeated(..);
 
     let userinfo = (
         (&unreserved, &pct_encoded, &sub_delims, ':')
             .any()
-            .repeated(..)
-            .collect(),
+            .repeated(..),
         '@',
     )
         .seq()
-        .map(|[userinfo, _at]| userinfo);
+        .map(|(userinfo, _at)| userinfo.into_iter().collect::<ByteStream>());
     // "In order to disambiguate the syntax, we apply the "first-match-wins" algorithm"
-    let host = (ipv4address, reg_name).first();
+    let host = (ipv4address.collect(), reg_name.collect()).first();
     let port = (
         ':',
         char::when(|c| c.is_ascii_digit()).repeated(..).collect(),
     )
         .seq()
-        .map(|[_colon, port]| port);
+        .map(|(_colon, port)| port);
     let authority = (userinfo.optional(), host, port.optional()).seq();
 
-    let ParseResult::Match([userinfo, host, port], input) =
+    let ParseResult::Match((userinfo, host, port), input) =
         authority.extract(ByteStream::from("example.com:3245/path"), None, true)
     else {
         panic!();
@@ -779,7 +768,7 @@ fn url_authority_unpack() {
     assert_eq!(port.to_string(), "3245");
     assert_eq!(input.to_string(), "/path");
 
-    let ParseResult::Match([userinfo, host, port], input) =
+    let ParseResult::Match((userinfo, host, port), input) =
         authority.extract(ByteStream::from("example@192.168.14.57"), None, true)
     else {
         panic!();
@@ -805,7 +794,7 @@ fn test_readme() {
     let reg_name = (&unreserved, &pct_encoded, &sub_delims)
         .any()
         .repeated(1..255)
-        .collect::<ByteStream>();
+        .collect();
 
     // Parse a hostname arriving as a stream of data.
     let ParseResult::Partial(state) = reg_name.extract(ByteStream::from("www.exa"), None, false)

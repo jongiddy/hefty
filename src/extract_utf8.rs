@@ -1,5 +1,6 @@
 use bytes::Buf as _;
 
+use crate::iterable::OutputToByteStream;
 use crate::repeatable::Repeatable;
 use crate::{ByteStream, Extract, ParseAny, ParseResult, ParseWhen};
 
@@ -63,6 +64,12 @@ impl Extract for char {
 // 'a'.optional()
 impl Repeatable for char {}
 
+impl OutputToByteStream for char {
+    fn output_to_bytestream(output: Self::Output) -> ByteStream {
+        output
+    }
+}
+
 // "abc"
 impl Extract for &str {
     type State = (usize, ByteStream);
@@ -92,6 +99,12 @@ impl Extract for &str {
 }
 
 impl Repeatable for &str {}
+
+impl OutputToByteStream for &str {
+    fn output_to_bytestream(output: Self::Output) -> ByteStream {
+        output
+    }
+}
 
 pub struct AnyCharParser;
 
@@ -141,6 +154,12 @@ impl Extract for AnyCharParser {
 
 // char::any().optional()
 impl Repeatable for AnyCharParser {}
+
+impl OutputToByteStream for AnyCharParser {
+    fn output_to_bytestream(output: Self::Output) -> ByteStream {
+        output
+    }
+}
 
 impl ParseAny for char {
     type Parser = AnyCharParser;
@@ -215,6 +234,15 @@ where
 
 // char::when(|c|...).optional()
 impl<F> Repeatable for CharWhenParser<F> where F: Fn(char) -> bool {}
+
+impl<F> OutputToByteStream for CharWhenParser<F>
+where
+    F: Fn(char) -> bool,
+{
+    fn output_to_bytestream(output: Self::Output) -> ByteStream {
+        output
+    }
+}
 
 impl<F> ParseWhen<char, F> for char
 where

@@ -1,50 +1,45 @@
-use std::marker::PhantomData;
-
 use crate::repeatable::Repeatable;
 use crate::{ByteStream, Extract, ParseResult};
 
+pub trait OutputToByteStream: Extract {
+    fn output_to_bytestream(output: Self::Output) -> ByteStream;
+}
+
+impl<T> OutputToByteStream for &T
+where
+    T: OutputToByteStream,
+{
+    fn output_to_bytestream(output: Self::Output) -> ByteStream {
+        T::output_to_bytestream(output)
+    }
+}
+
 // A trait to merge a sequence of ByteStreams into a single ByteStream
 pub trait Collectable: Extract + Sized {
-    fn collect<Target>(self) -> CollectParser<Target, Self> {
+    fn collect(self) -> CollectParser<Self> {
         CollectParser::new(self)
     }
 }
 
-impl<Parser> Collectable for Parser
-where
-    Parser: Extract,
-    Parser::Output: IntoIterator<Item = ByteStream>,
-{
-}
+impl<Parser> Collectable for Parser where Parser: OutputToByteStream {}
 
-pub struct CollectParser<Target, InnerParser> {
+pub struct CollectParser<InnerParser> {
     inner: InnerParser,
-    target: PhantomData<Target>,
 }
 
 #[allow(dead_code)]
-impl<Target, InnerParser> CollectParser<Target, InnerParser> {
+impl<InnerParser> CollectParser<InnerParser> {
     fn new(inner: InnerParser) -> Self {
-        Self {
-            inner,
-            target: PhantomData,
-        }
+        Self { inner }
     }
 }
 
-impl<Target, InnerParser> Repeatable for CollectParser<Target, InnerParser> where
-    CollectParser<Target, InnerParser>: Extract
-{
-}
-
-impl<Target, InnerParser> Extract for CollectParser<Target, InnerParser>
+impl<InnerParser> Extract for CollectParser<InnerParser>
 where
-    InnerParser: Extract,
-    InnerParser::Output: IntoIterator,
-    Target: FromIterator<<<InnerParser as Extract>::Output as std::iter::IntoIterator>::Item>,
+    InnerParser: OutputToByteStream,
 {
     type State = InnerParser::State;
-    type Output = Target;
+    type Output = ByteStream;
 
     fn extract(
         &self,
@@ -56,12 +51,22 @@ where
             ParseResult::NoMatch(position) => ParseResult::NoMatch(position),
             ParseResult::Partial(state) => ParseResult::Partial(state),
             ParseResult::Match(output, input) => {
-                ParseResult::Match(output.into_iter().collect(), input)
+                ParseResult::Match(InnerParser::output_to_bytestream(output), input)
             }
         }
     }
 }
 
+impl<InnerParser> Repeatable for CollectParser<InnerParser> where InnerParser: OutputToByteStream {}
+
+impl<InnerParser> OutputToByteStream for CollectParser<InnerParser>
+where
+    InnerParser: OutputToByteStream,
+{
+    fn output_to_bytestream(output: Self::Output) -> ByteStream {
+        output
+    }
+}
 // A trait to map an extractors response to another format
 pub trait Mappable: Extract + Sized {
     fn map<Func, Output>(self, func: Func) -> MapParser<Func, Output, Self>
@@ -73,12 +78,7 @@ pub trait Mappable: Extract + Sized {
     }
 }
 
-impl<Parser> Mappable for Parser
-where
-    Parser: Extract,
-    Parser::Output: IntoIterator<Item = ByteStream>,
-{
-}
+impl<Parser> Mappable for Parser where Parser: Extract {}
 
 pub struct MapParser<Func, Output, InnerParser>
 where
@@ -98,13 +98,6 @@ where
     fn new(inner: InnerParser, func: Func) -> Self {
         Self { inner, func }
     }
-}
-
-impl<Func, Output, InnerParser> Repeatable for MapParser<Func, Output, InnerParser>
-where
-    InnerParser: Extract,
-    Func: Fn(InnerParser::Output) -> Output,
-{
 }
 
 impl<Func, Output, InnerParser> Extract for MapParser<Func, Output, InnerParser>
@@ -127,4 +120,11 @@ where
             ParseResult::Match(output, input) => ParseResult::Match((self.func)(output), input),
         }
     }
+}
+
+impl<Func, Output, InnerParser> Repeatable for MapParser<Func, Output, InnerParser>
+where
+    InnerParser: Extract,
+    Func: Fn(InnerParser::Output) -> Output,
+{
 }
