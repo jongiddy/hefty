@@ -9,14 +9,12 @@ pub struct TupleAny<T> {
 }
 
 #[typle(Tuple for 1..=12)]
-impl<T> Repeatable for TupleAny<T> where T: Tuple<impl Extract<Output = ByteStream>> {}
-
-#[typle(Tuple for 1..=12)]
 impl<T> Extract for TupleAny<T>
 where
-    T: Tuple<impl Extract<Output = ByteStream>>,
+    T: Tuple,
+    T::Types: Extract<Output = ByteStream>,
 {
-    type State = typle_expand!(Option<Option<T<{ INDEX }>::State>>);
+    type State = typle_for!(i in .. => Option<Option<T<{i}>::State>>);
     type Output = ByteStream;
 
     fn extract(
@@ -26,7 +24,7 @@ where
         last: bool,
     ) -> ParseResult<Self::State, Self::Output> {
         let mut exhausted = true;
-        let mut state = state.unwrap_or(typle_expand!(Some(None)));
+        let mut state = state.unwrap_or(typle_for!(.. => Some(None)));
         for typle_const!(i) in 0..T::LEN {
             if let Some(inner_state) = &mut state[[i]] {
                 let input = input.clone();
@@ -55,9 +53,18 @@ where
 }
 
 #[typle(Tuple for 1..=12)]
+impl<T> Repeatable for TupleAny<T>
+where
+    T: Tuple,
+    T::Types: Extract<Output = ByteStream>,
+{
+}
+
+#[typle(Tuple for 1..=12)]
 impl<T> OutputToByteStream for TupleAny<T>
 where
-    T: Tuple<impl Extract<Output = ByteStream>>,
+    T: Tuple,
+    T::Types: Extract<Output = ByteStream>,
 {
     fn output_to_bytestream(output: Self::Output) -> ByteStream {
         output
@@ -69,14 +76,12 @@ pub struct TupleFirst<T> {
 }
 
 #[typle(Tuple for 1..=12)]
-impl<T> Repeatable for TupleFirst<T> where T: Tuple<impl Extract<Output = ByteStream>> {}
-
-#[typle(Tuple for 1..=12)]
 impl<T> Extract for TupleFirst<T>
 where
-    T: Tuple<impl Extract<Output = ByteStream>>,
+    T: Tuple,
+    T::Types: Extract<Output = ByteStream>,
 {
-    type State = typle_expand!(Option<ParseResult<T<{ INDEX }>::State, ByteStream>>);
+    type State = typle_for!(i in .. => Option<ParseResult<T<{i}>::State, ByteStream>>);
     type Output = ByteStream;
 
     fn extract(
@@ -86,7 +91,7 @@ where
         last: bool,
     ) -> ParseResult<Self::State, Self::Output> {
         let mut first = true;
-        let mut state = state.unwrap_or(typle_expand!(None));
+        let mut state = state.unwrap_or(typle_for!(.. => None));
         for typle_const!(i) in 0..T::LEN {
             state[[i]] = match state[[i]].take() {
                 Some(ParseResult::NoMatch(position)) => Some(ParseResult::NoMatch(position)),
@@ -143,9 +148,18 @@ where
 }
 
 #[typle(Tuple for 1..=12)]
+impl<T> Repeatable for TupleFirst<T>
+where
+    T: Tuple,
+    T::Types: Extract<Output = ByteStream>,
+{
+}
+
+#[typle(Tuple for 1..=12)]
 impl<T> OutputToByteStream for TupleFirst<T>
 where
-    T: Tuple<impl Extract<Output = ByteStream>>,
+    T: Tuple,
+    T::Types: Extract<Output = ByteStream>,
 {
     fn output_to_bytestream(output: Self::Output) -> ByteStream {
         output
@@ -153,17 +167,14 @@ where
 }
 
 #[typle(Tuple for 1..=12)]
-type TupleSequenceOutput<T>
-where
-    T: Tuple<impl Extract>,
-= typle_expand!(Option<T<{ INDEX }>::Output>);
-
-#[typle(Tuple for 1..=12)]
 pub enum TupleSequenceState<T>
 where
-    T: Tuple<impl Extract>,
+    T: Tuple,
+    T::Types: Extract,
 {
-    S(Option<T<{ INDEX }>::State>, TupleSequenceOutput<(T)>) = typle_variants!(),
+    S = typle_variant!(i in .. =>
+        typle_for!(j in ..i => T::<{j}>::Output), Option<T<{i}>::State>
+    ),
 }
 
 pub struct TupleSequence<T> {
@@ -171,15 +182,13 @@ pub struct TupleSequence<T> {
 }
 
 #[typle(Tuple for 1..=12)]
-impl<T> Repeatable for TupleSequence<T> where T: Tuple<impl Extract> {}
-
-#[typle(Tuple for 1..=12)]
 impl<T> Extract for TupleSequence<T>
 where
-    T: Tuple<impl Extract>,
+    T: Tuple,
+    T::Types: Extract,
 {
     type State = TupleSequenceState<(T)>;
-    type Output = typle_expand!(<T<{ INDEX }> as Extract>::Output);
+    type Output = typle_for!(i in .. => <T<{i}> as Extract>::Output);
 
     fn extract(
         &self,
@@ -189,11 +198,10 @@ where
     ) -> ParseResult<Self::State, Self::Output> {
         let default_position = input.position();
         #[allow(unused_mut)]
-        let mut state =
-            state.unwrap_or(Self::State::S::<typle_index!(0)>(None, typle_expand!(None)));
+        let mut state = state.unwrap_or(Self::State::S::<typle_index!(0)>((), None));
         for typle_const!(i) in 0..T::LEN {
             #[allow(irrefutable_let_patterns)]
-            if let Self::State::S::<typle_index!(i)>(inner_state, mut output) = state {
+            if let Self::State::S::<typle_index!(i)>(output, inner_state) = state {
                 match self.tuple[[i]].extract(input, inner_state, last) {
                     ParseResult::NoMatch(position) => {
                         return ParseResult::NoMatch(position);
@@ -203,21 +211,25 @@ where
                             return ParseResult::NoMatch(default_position);
                         } else {
                             return ParseResult::Partial(Self::State::S::<typle_index!(i)>(
-                                Some(inner_state),
                                 output,
+                                Some(inner_state),
                             ));
                         }
                     }
                     ParseResult::Match(matched, remain) => {
-                        output[[i]] = Some(matched);
+                        // Make an output (i+1)-tuple from the existing output i-tuple and `matched`
+                        let output = typle_for!(j in ..=i =>
+                            if typle_const!(j != i) {
+                                output[[j]]
+                            } else {
+                                matched
+                            }
+                        );
                         input = remain;
                         if typle_const!(i + 1 == T::LEN) {
-                            return ParseResult::Match(
-                                typle_expand!(output[[INDEX]].unwrap()),
-                                input,
-                            );
+                            return ParseResult::Match(output, input);
                         } else {
-                            state = Self::State::S::<typle_index!(i + 1)>(None, output);
+                            state = Self::State::S::<typle_index!(i + 1)>(output, None);
                         }
                     }
                 }
@@ -228,9 +240,18 @@ where
 }
 
 #[typle(Tuple for 1..=12)]
+impl<T> Repeatable for TupleSequence<T>
+where
+    T: Tuple,
+    T::Types: Extract,
+{
+}
+
+#[typle(Tuple for 1..=12)]
 impl<T> OutputToByteStream for TupleSequence<T>
 where
-    T: Tuple<impl OutputToByteStream>,
+    T: Tuple,
+    T::Types: OutputToByteStream,
 {
     fn output_to_bytestream(output: Self::Output) -> ByteStream {
         #[allow(unused_mut)]
@@ -257,7 +278,8 @@ pub trait ExtractTuple {
 #[typle(Tuple for 1..=12)]
 impl<T> ExtractTuple for T
 where
-    T: Tuple<impl Extract>,
+    T: Tuple,
+    T::Types: Extract,
 {
     type TupleAny = TupleAny<T>;
     type TupleFirst = TupleFirst<T>;

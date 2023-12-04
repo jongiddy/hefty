@@ -258,7 +258,8 @@ impl From<&'static str> for ByteStream {
 #[typle(Tuple for 1..=12)]
 impl<T> From<T> for ByteStream
 where
-    T: Tuple<impl Into<ByteStream>>,
+    T: Tuple,
+    T::Types: Into<ByteStream>,
 {
     fn from(value: T) -> Self {
         #[allow(unused_mut)]
