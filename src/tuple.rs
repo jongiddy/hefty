@@ -187,7 +187,7 @@ where
     T: Tuple,
     T::Types: Extract,
 {
-    type State = TupleSequenceState<(T)>;
+    type State = TupleSequenceState<T::Types>;
     type Output = typle_for!(i in .. => <T<{i}> as Extract>::Output);
 
     fn extract(
