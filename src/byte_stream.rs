@@ -259,7 +259,7 @@ impl From<&'static str> for ByteStream {
 impl<T> From<T> for ByteStream
 where
     T: Tuple,
-    T::Types: Into<ByteStream>,
+    T<_>: Into<ByteStream>,
 {
     fn from(value: T) -> Self {
         #[allow(unused_mut)]

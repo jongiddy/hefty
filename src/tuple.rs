@@ -12,7 +12,7 @@ pub struct TupleAny<T> {
 impl<T> Extract for TupleAny<T>
 where
     T: Tuple,
-    T::Types: Extract<Output = ByteStream>,
+    T<_>: Extract<Output = ByteStream>,
 {
     type State = typle_for!(i in .. => Option<Option<T<{i}>::State>>);
     type Output = ByteStream;
@@ -56,7 +56,7 @@ where
 impl<T> Repeatable for TupleAny<T>
 where
     T: Tuple,
-    T::Types: Extract<Output = ByteStream>,
+    T<_>: Extract<Output = ByteStream>,
 {
 }
 
@@ -64,7 +64,7 @@ where
 impl<T> OutputToByteStream for TupleAny<T>
 where
     T: Tuple,
-    T::Types: Extract<Output = ByteStream>,
+    T<_>: Extract<Output = ByteStream>,
 {
     fn output_to_bytestream(output: Self::Output) -> ByteStream {
         output
@@ -79,7 +79,7 @@ pub struct TupleFirst<T> {
 impl<T> Extract for TupleFirst<T>
 where
     T: Tuple,
-    T::Types: Extract<Output = ByteStream>,
+    T<_>: Extract<Output = ByteStream>,
 {
     type State = typle_for!(i in .. => Option<ParseResult<T<{i}>::State, ByteStream>>);
     type Output = ByteStream;
@@ -151,7 +151,7 @@ where
 impl<T> Repeatable for TupleFirst<T>
 where
     T: Tuple,
-    T::Types: Extract<Output = ByteStream>,
+    T<_>: Extract<Output = ByteStream>,
 {
 }
 
@@ -159,7 +159,7 @@ where
 impl<T> OutputToByteStream for TupleFirst<T>
 where
     T: Tuple,
-    T::Types: Extract<Output = ByteStream>,
+    T<_>: Extract<Output = ByteStream>,
 {
     fn output_to_bytestream(output: Self::Output) -> ByteStream {
         output
@@ -170,7 +170,7 @@ where
 pub enum TupleSequenceState<T>
 where
     T: Tuple,
-    T::Types: Extract,
+    T<_>: Extract,
 {
     S = typle_variant!(i in .. =>
         typle_for!(j in ..i => T::<{j}>::Output), Option<T<{i}>::State>
@@ -185,9 +185,9 @@ pub struct TupleSequence<T> {
 impl<T> Extract for TupleSequence<T>
 where
     T: Tuple,
-    T::Types: Extract,
+    T<_>: Extract,
 {
-    type State = TupleSequenceState<T::Types>;
+    type State = TupleSequenceState<T<{..}>>;
     type Output = typle_for!(i in .. => <T<{i}> as Extract>::Output);
 
     fn extract(
@@ -243,7 +243,7 @@ where
 impl<T> Repeatable for TupleSequence<T>
 where
     T: Tuple,
-    T::Types: Extract,
+    T<_>: Extract,
 {
 }
 
@@ -251,7 +251,7 @@ where
 impl<T> OutputToByteStream for TupleSequence<T>
 where
     T: Tuple,
-    T::Types: OutputToByteStream,
+    T<_>: OutputToByteStream,
 {
     fn output_to_bytestream(output: Self::Output) -> ByteStream {
         #[allow(unused_mut)]
@@ -279,7 +279,7 @@ pub trait ExtractTuple {
 impl<T> ExtractTuple for T
 where
     T: Tuple,
-    T::Types: Extract,
+    T<_>: Extract,
 {
     type TupleAny = TupleAny<T>;
     type TupleFirst = TupleFirst<T>;
