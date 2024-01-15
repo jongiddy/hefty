@@ -14,6 +14,8 @@ where
     T: Tuple,
     T<_>: Extract<Output = ByteStream>,
 {
+    // For each component the state begins as `Some(None)`. After a call to `extract` the state
+    // becomes`Some(Some(inner_state))`. If the component does not match, the state becomes `None`.
     type State = typle_for!(i in .. => Option<Option<T<{i}>::State>>);
     type Output = ByteStream;
 
@@ -25,7 +27,7 @@ where
     ) -> ParseResult<Self::State, Self::Output> {
         let mut exhausted = true;
         let mut state = state.unwrap_or(typle_for!(.. => Some(None)));
-        for typle_const!(i) in 0..T::LEN {
+        for typle_index!(i) in 0..T::LEN {
             if let Some(inner_state) = &mut state[[i]] {
                 let input = input.clone();
                 match self.tuple[[i]].extract(input, inner_state.take(), last) {
@@ -81,6 +83,8 @@ where
     T: Tuple,
     T<_>: Extract<Output = ByteStream>,
 {
+    // For each component the state begins as `None`. After a call to `extract` the returned
+    // `ParseResult` is kept in the state.
     type State = typle_for!(i in .. => Option<ParseResult<T<{i}>::State, ByteStream>>);
     type Output = ByteStream;
 
@@ -92,7 +96,7 @@ where
     ) -> ParseResult<Self::State, Self::Output> {
         let mut first = true;
         let mut state = state.unwrap_or(typle_for!(.. => None));
-        for typle_const!(i) in 0..T::LEN {
+        for typle_index!(i) in 0..T::LEN {
             state[[i]] = match state[[i]].take() {
                 Some(ParseResult::NoMatch(position)) => Some(ParseResult::NoMatch(position)),
                 Some(ParseResult::Partial(inner_state)) => {
@@ -187,7 +191,9 @@ where
     T: Tuple,
     T<_>: Extract,
 {
-    type State = TupleSequenceState<T<{..}>>;
+    // The state contains the output from all previous components and the state
+    // of the current component.
+    type State = TupleSequenceState<T<{ .. }>>;
     type Output = typle_for!(i in .. => <T<{i}> as Extract>::Output);
 
     fn extract(
@@ -197,11 +203,11 @@ where
         last: bool,
     ) -> ParseResult<Self::State, Self::Output> {
         let default_position = input.position();
-        #[allow(unused_mut)]
-        let mut state = state.unwrap_or(Self::State::S::<typle_index!(0)>((), None));
-        for typle_const!(i) in 0..T::LEN {
-            #[allow(irrefutable_let_patterns)]
-            if let Self::State::S::<typle_index!(i)>(output, inner_state) = state {
+        #[typle_attr_if(T::LEN == 1, allow(unused_mut))]
+        let mut state = state.unwrap_or(Self::State::S::<typle_ident!(0)>((), None));
+        for typle_index!(i) in 0..T::LEN {
+            #[typle_attr_if(T::LEN == 1, allow(irrefutable_let_patterns))]
+            if let Self::State::S::<typle_ident!(i)>(output, inner_state) = state {
                 match self.tuple[[i]].extract(input, inner_state, last) {
                     ParseResult::NoMatch(position) => {
                         return ParseResult::NoMatch(position);
@@ -210,7 +216,7 @@ where
                         if last {
                             return ParseResult::NoMatch(default_position);
                         } else {
-                            return ParseResult::Partial(Self::State::S::<typle_index!(i)>(
+                            return ParseResult::Partial(Self::State::S::<typle_ident!(i)>(
                                 output,
                                 Some(inner_state),
                             ));
@@ -229,7 +235,7 @@ where
                         if typle_const!(i + 1 == T::LEN) {
                             return ParseResult::Match(output, input);
                         } else {
-                            state = Self::State::S::<typle_index!(i + 1)>(output, None);
+                            state = Self::State::S::<typle_ident!(i + 1)>(output, None);
                         }
                     }
                 }
@@ -254,9 +260,9 @@ where
     T<_>: OutputToByteStream,
 {
     fn output_to_bytestream(output: Self::Output) -> ByteStream {
-        #[allow(unused_mut)]
+        #[typle_attr_if(T::LEN == 1, allow(unused_mut))]
         let mut byte_stream = T::<0>::output_to_bytestream(output.0);
-        for typle_const!(i) in 1..T::LEN {
+        for typle_index!(i) in 1..T::LEN {
             byte_stream.merge(T::<{ i }>::output_to_bytestream(output[[i]]));
         }
         byte_stream
