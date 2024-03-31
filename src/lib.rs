@@ -1,5 +1,3 @@
-use repeatable::Repeatable;
-
 mod byte_stream;
 mod extract_byte;
 mod extract_utf8;
@@ -57,6 +55,22 @@ pub trait Extract {
         state: Option<Self::State>,
         last: bool,
     ) -> ParseResult<Self::State, Self::Output>;
+}
+
+// Required for tuple parser
+impl Extract for std::convert::Infallible {
+    type State = std::convert::Infallible;
+
+    type Output = std::convert::Infallible;
+
+    fn extract(
+        &self,
+        _input: ByteStream,
+        _state: Option<Self::State>,
+        _last: bool,
+    ) -> ParseResult<Self::State, Self::Output> {
+        ParseResult::NoMatch(0)
+    }
 }
 
 impl<T> Extract for &T

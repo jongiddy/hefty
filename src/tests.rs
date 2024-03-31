@@ -2,11 +2,10 @@ use std::collections::VecDeque;
 
 use bytes::Buf;
 
+use crate::repeatable::Repeatable;
 use crate::{byte, ExtractTuple};
 
-use super::{
-    ByteStream, Collectable, Extract, Mappable, ParseAny, ParseResult, ParseWhen, Repeatable,
-};
+use super::{ByteStream, Collectable, Extract, Mappable, ParseAny, ParseResult, ParseWhen};
 
 #[test]
 fn test_byte_literal() {

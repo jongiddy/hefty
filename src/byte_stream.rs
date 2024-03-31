@@ -264,7 +264,7 @@ where
     fn from(value: T) -> Self {
         #[allow(unused_mut)]
         let mut byte_stream = value.0.into();
-        for typle_const!(i) in 1..T::LEN {
+        for typle_index!(i) in 1..T::LEN {
             byte_stream.merge(value[[i]].into());
         }
         byte_stream

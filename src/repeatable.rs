@@ -3,6 +3,7 @@ use std::ops::RangeBounds;
 use crate::iterable::OutputToByteStream;
 use crate::{ByteStream, Extract, ParseResult};
 
+#[allow(dead_code)]
 pub trait Repeatable: Extract + Sized {
     fn optional(self) -> OptionalParser<Self> {
         OptionalParser::new(self)

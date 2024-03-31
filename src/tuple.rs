@@ -2,8 +2,10 @@ use typle::typle;
 
 use crate::byte_stream::ByteStream;
 use crate::iterable::OutputToByteStream;
-use crate::{Extract, ParseResult, Repeatable};
+use crate::repeatable::Repeatable;
+use crate::{Extract, ParseResult};
 
+#[typle(Tuple for 1..=12)]
 pub struct TupleAny<T> {
     tuple: T,
 }
@@ -16,7 +18,7 @@ where
 {
     // For each component the state begins as `Some(None)`. After a call to `extract` the state
     // becomes`Some(Some(inner_state))`. If the component does not match, the state becomes `None`.
-    type State = typle_for!(i in .. => Option<Option<T<{i}>::State>>);
+    type State = typle_for!(i in ..T::LEN => Option<Option<T<{i}>::State>>);
     type Output = ByteStream;
 
     fn extract(
@@ -26,7 +28,7 @@ where
         last: bool,
     ) -> ParseResult<Self::State, Self::Output> {
         let mut exhausted = true;
-        let mut state = state.unwrap_or(typle_for!(.. => Some(None)));
+        let mut state = state.unwrap_or(typle_for!(..T::LEN => Some(None)));
         for typle_index!(i) in 0..T::LEN {
             if let Some(inner_state) = &mut state[[i]] {
                 let input = input.clone();
@@ -85,7 +87,7 @@ where
 {
     // For each component the state begins as `None`. After a call to `extract` the returned
     // `ParseResult` is kept in the state.
-    type State = typle_for!(i in .. => Option<ParseResult<T<{i}>::State, ByteStream>>);
+    type State = typle_for!(i in ..T::LEN => Option<ParseResult<T<{i}>::State, ByteStream>>);
     type Output = ByteStream;
 
     fn extract(
@@ -95,7 +97,7 @@ where
         last: bool,
     ) -> ParseResult<Self::State, Self::Output> {
         let mut first = true;
-        let mut state = state.unwrap_or(typle_for!(.. => None));
+        let mut state = state.unwrap_or(typle_for!(..T::LEN => None));
         for typle_index!(i) in 0..T::LEN {
             state[[i]] = match state[[i]].take() {
                 Some(ParseResult::NoMatch(position)) => Some(ParseResult::NoMatch(position)),
@@ -185,7 +187,7 @@ pub struct TupleSequence<T> {
     tuple: T,
 }
 
-#[typle(Tuple for 1..=12)]
+#[typle(Tuple for 1..=12, never=std::convert::Infallible)]
 impl<T> Extract for TupleSequence<T>
 where
     T: Tuple,
@@ -194,7 +196,7 @@ where
     // The state contains the output from all previous components and the state
     // of the current component.
     type State = TupleSequenceState<T<{ .. }>>;
-    type Output = typle_for!(i in .. => <T<{i}> as Extract>::Output);
+    type Output = typle_for!(i in ..T::LEN => <T<{i}> as Extract>::Output);
 
     fn extract(
         &self,
@@ -206,7 +208,6 @@ where
         #[typle_attr_if(T::LEN == 1, allow(unused_mut))]
         let mut state = state.unwrap_or(Self::State::S::<typle_ident!(0)>((), None));
         for typle_index!(i) in 0..T::LEN {
-            #[typle_attr_if(T::LEN == 1, allow(irrefutable_let_patterns))]
             if let Self::State::S::<typle_ident!(i)>(output, inner_state) = state {
                 match self.tuple[[i]].extract(input, inner_state, last) {
                     ParseResult::NoMatch(position) => {
@@ -307,7 +308,8 @@ where
 #[cfg(test)]
 mod tests {
     use crate::byte_stream::ByteStream;
-    use crate::{Extract, ExtractTuple, ParseResult, ParseWhen, Repeatable};
+    use crate::repeatable::Repeatable;
+    use crate::{Extract, ExtractTuple, ParseResult, ParseWhen};
 
     #[test]
     fn test_sequence() {
