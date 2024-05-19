@@ -374,9 +374,10 @@ fn test_function() {
 #[test]
 fn test_sequence() {
     let input = ByteStream::from("hello3a");
-    let ParseResult::Match((out1, out2), input) = ("hello", char::when(|c: char| c.is_digit(10)))
-        .seq()
-        .extract(input, None, false)
+    let ParseResult::Match((out1, out2), input) =
+        ("hello", char::when(|c: char| c.is_ascii_digit()))
+            .seq()
+            .extract(input, None, false)
     else {
         panic!()
     };
@@ -404,10 +405,11 @@ fn test_sequence() {
 #[test]
 fn test_optional_sequence() {
     let input = ByteStream::from("hello, world!");
-    let ParseResult::Match((out1, out2), input) = ("hello", char::when(|c: char| c.is_digit(10)))
-        .seq()
-        .optional()
-        .extract(input, None, false)
+    let ParseResult::Match((out1, out2), input) =
+        ("hello", char::when(|c: char| c.is_ascii_digit()))
+            .seq()
+            .optional()
+            .extract(input, None, false)
     else {
         panic!()
     };
@@ -430,14 +432,14 @@ fn test_optional_sequence() {
 #[test]
 fn test_any() {
     let input = ByteStream::from("hello3a");
-    let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_digit(10)))
+    let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_ascii_digit()))
         .any()
         .extract(input, None, false)
     else {
         panic!()
     };
     assert_eq!(output.to_string(), "hello");
-    let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_digit(10)))
+    let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_ascii_digit()))
         .any()
         .extract(input, None, false)
     else {
@@ -450,14 +452,14 @@ fn test_any() {
 #[test]
 fn test_first() {
     let input = ByteStream::from("hello3a");
-    let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_digit(10)))
+    let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_ascii_digit()))
         .first()
         .extract(input, None, false)
     else {
         panic!()
     };
     assert_eq!(output.to_string(), "hello");
-    let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_digit(10)))
+    let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_ascii_digit()))
         .first()
         .extract(input, None, false)
     else {

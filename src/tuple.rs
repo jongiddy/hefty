@@ -18,7 +18,7 @@ where
 {
     // For each component the state begins as `Some(None)`. After a call to `extract` the state
     // becomes`Some(Some(inner_state))`. If the component does not match, the state becomes `None`.
-    type State = typle_for!(i in ..T::LEN => Option<Option<T<{i}>::State>>);
+    type State = typle_for!(i in .. => Option<Option<T<{i}>::State>>);
     type Output = ByteStream;
 
     fn extract(
@@ -28,7 +28,7 @@ where
         last: bool,
     ) -> ParseResult<Self::State, Self::Output> {
         let mut exhausted = true;
-        let mut state = state.unwrap_or(typle_for!(..T::LEN => Some(None)));
+        let mut state = state.unwrap_or(typle_for!(.. => Some(None)));
         for typle_index!(i) in 0..T::LEN {
             if let Some(inner_state) = &mut state[[i]] {
                 let input = input.clone();
@@ -49,9 +49,9 @@ where
             }
         }
         if exhausted {
-            return ParseResult::NoMatch(input.position());
+            ParseResult::NoMatch(input.position())
         } else {
-            return ParseResult::Partial(state);
+            ParseResult::Partial(state)
         }
     }
 }
@@ -87,7 +87,7 @@ where
 {
     // For each component the state begins as `None`. After a call to `extract` the returned
     // `ParseResult` is kept in the state.
-    type State = typle_for!(i in ..T::LEN => Option<ParseResult<T<{i}>::State, ByteStream>>);
+    type State = typle_for!(i in .. => Option<ParseResult<T<{i}>::State, ByteStream>>);
     type Output = ByteStream;
 
     fn extract(
@@ -97,7 +97,7 @@ where
         last: bool,
     ) -> ParseResult<Self::State, Self::Output> {
         let mut first = true;
-        let mut state = state.unwrap_or(typle_for!(..T::LEN => None));
+        let mut state = state.unwrap_or(typle_for!(.. => None));
         for typle_index!(i) in 0..T::LEN {
             state[[i]] = match state[[i]].take() {
                 Some(ParseResult::NoMatch(position)) => Some(ParseResult::NoMatch(position)),
@@ -146,9 +146,9 @@ where
             };
         }
         if first {
-            return ParseResult::NoMatch(input.position());
+            ParseResult::NoMatch(input.position())
         } else {
-            return ParseResult::Partial(state);
+            ParseResult::Partial(state)
         }
     }
 }
@@ -178,7 +178,7 @@ where
     T: Tuple,
     T<_>: Extract,
 {
-    S = typle_variant!(i in .. =>
+    S = typle_variant!(i in ..T::MAX =>
         typle_for!(j in ..i => T::<{j}>::Output), Option<T<{i}>::State>
     ),
 }
@@ -195,8 +195,8 @@ where
 {
     // The state contains the output from all previous components and the state
     // of the current component.
-    type State = TupleSequenceState<T<{ .. }>>;
-    type Output = typle_for!(i in ..T::LEN => <T<{i}> as Extract>::Output);
+    type State = TupleSequenceState<T<{ ..T::MAX }>>;
+    type Output = typle_for!(i in .. => <T<{i}> as Extract>::Output);
 
     fn extract(
         &self,
@@ -225,13 +225,7 @@ where
                     }
                     ParseResult::Match(matched, remain) => {
                         // Make an output (i+1)-tuple from the existing output i-tuple and `matched`
-                        let output = typle_for!(j in ..=i =>
-                            if typle_const!(j != i) {
-                                output[[j]]
-                            } else {
-                                matched
-                            }
-                        );
+                        let output = (output[[..i]], matched);
                         input = remain;
                         if typle_const!(i + 1 == T::LEN) {
                             return ParseResult::Match(output, input);
@@ -316,7 +310,7 @@ mod tests {
         let input = ByteStream::from("hello3a");
         let ParseResult::Match((out1, out2, out3), input) = (
             "hello",
-            char::when(|c: char| c.is_digit(10)),
+            char::when(|c: char| c.is_ascii_digit()),
             char::when(char::is_alphabetic),
         )
             .seq()
@@ -350,7 +344,7 @@ mod tests {
     fn test_optional_sequence() {
         let input = ByteStream::from("hello, world!");
         let ParseResult::Match((out1, out2), input) =
-            ("hello", char::when(|c: char| c.is_digit(10)))
+            ("hello", char::when(|c: char| c.is_ascii_digit()))
                 .seq()
                 .optional()
                 .extract(input, None, true)
@@ -376,14 +370,14 @@ mod tests {
     #[test]
     fn test_any() {
         let input = ByteStream::from("hello3a");
-        let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_digit(10)))
+        let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_ascii_digit()))
             .any()
             .extract(input, None, false)
         else {
             panic!()
         };
         assert_eq!(output.to_string(), "hello");
-        let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_digit(10)))
+        let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_ascii_digit()))
             .any()
             .extract(input, None, true)
         else {
@@ -396,14 +390,14 @@ mod tests {
     #[test]
     fn test_first() {
         let input = ByteStream::from("hello3a");
-        let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_digit(10)))
+        let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_ascii_digit()))
             .first()
             .extract(input, None, false)
         else {
             panic!()
         };
         assert_eq!(output.to_string(), "hello");
-        let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_digit(10)))
+        let ParseResult::Match(output, input) = ("hello", char::when(|c: char| c.is_ascii_digit()))
             .first()
             .extract(input, None, true)
         else {

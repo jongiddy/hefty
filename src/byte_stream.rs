@@ -293,7 +293,7 @@ impl Buf for ByteStream {
     fn chunk(&self) -> &[u8] {
         match &self.chunks {
             ByteChunks::Empty => &[],
-            ByteChunks::One(bytes) => &bytes,
+            ByteChunks::One(bytes) => bytes,
             ByteChunks::Multiple(chunks) => chunks.front().unwrap(),
         }
     }
@@ -346,7 +346,7 @@ impl ToString for ByteStream {
                 let mut bytes_iter = chunks.iter();
                 let mut vec = Vec::from(bytes_iter.next().unwrap().clone());
                 for bytes in bytes_iter {
-                    vec.extend_from_slice(&*bytes)
+                    vec.extend_from_slice(bytes)
                 }
                 String::from_utf8_lossy(&vec).into_owned()
             }
